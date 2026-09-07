@@ -2,6 +2,7 @@ import { supabase } from "../supabaseClient.js";
 import { topbarHTML } from "../components/topbar.js";
 import { uploadPhoto } from "../utils/uploadPhoto.js";
 import { escapeHtml } from "../utils/html.js";
+import { shuffle } from "../utils/shuffle.js";
 
 export async function renderRespond(app, code) {
   app.innerHTML = `${topbarHTML("Quiz e Domande")}<main class="container"><div class="spinner">Caricamento...</div></main>`;
@@ -23,15 +24,20 @@ export async function renderRespond(app, code) {
     return;
   }
 
-  const { data: questions } = await supabase
+  let { data: questions } = await supabase
     .from("questions")
     .select("*, question_options(*)")
     .eq("questionnaire_id", questionnaire.id)
     .order("order_index", { ascending: true });
 
-  (questions || []).forEach((q) => {
+  questions = questions || [];
+  questions.forEach((q) => {
     q.question_options.sort((a, b) => a.order_index - b.order_index);
   });
+
+  if (questionnaire.randomize_questions) {
+    questions = shuffle(questions);
+  }
 
   const state = {
     step: "gate",

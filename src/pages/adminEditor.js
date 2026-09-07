@@ -1,3 +1,4 @@
+import QRCode from "qrcode";
 import { supabase } from "../supabaseClient.js";
 import { topbarHTML } from "../components/topbar.js";
 import { escapeHtml } from "../utils/html.js";
@@ -67,6 +68,18 @@ export async function renderAdminEditor(app, questionnaireId) {
         <p class="hint">Condividi questo link con chi deve compilare il questionario:</p>
         <div class="share-box" id="shareUrl">${shareUrl}</div>
         <button class="btn secondary small" id="copyBtn" style="margin-top:10px;">Copia link</button>
+
+        <div class="center" style="margin-top:18px;">
+          <img id="qrImg" alt="QR code del questionario" style="width:180px;height:180px;border-radius:10px;border:1px solid var(--border);" />
+          <div>
+            <a class="btn secondary small" id="downloadQr" style="margin-top:10px;" download="qr-${questionnaire.share_code}.png">Scarica QR code</a>
+          </div>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:18px;">
+          <input type="checkbox" id="randomize" ${questionnaire.randomize_questions ? "checked" : ""} style="width:auto;" />
+          Mostra le domande in ordine casuale a ogni utente
+        </label>
       </div>
 
       <div class="card">
@@ -121,6 +134,23 @@ export async function renderAdminEditor(app, questionnaireId) {
       } catch {
         /* clipboard non disponibile, l'utente puo' copiare manualmente */
       }
+    });
+
+    QRCode.toDataURL(shareUrl, {
+      width: 360,
+      margin: 1,
+      color: { dark: "#1f1b2e", light: "#ffffff" },
+    }).then((dataUrl) => {
+      main.querySelector("#qrImg").src = dataUrl;
+      main.querySelector("#downloadQr").href = dataUrl;
+    });
+
+    main.querySelector("#randomize").addEventListener("change", async (e) => {
+      questionnaire.randomize_questions = e.target.checked;
+      await supabase
+        .from("questionnaires")
+        .update({ randomize_questions: e.target.checked })
+        .eq("id", questionnaire.id);
     });
 
     renderOptionsSection();
