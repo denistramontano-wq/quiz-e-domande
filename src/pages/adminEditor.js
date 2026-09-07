@@ -70,7 +70,7 @@ export async function renderAdminEditor(app, questionnaireId) {
         <button class="btn secondary small" id="copyBtn" style="margin-top:10px;">Copia link</button>
 
         <div class="center" style="margin-top:18px;">
-          <img id="qrImg" alt="QR code del questionario" style="width:180px;height:180px;border-radius:10px;border:1px solid var(--border);" />
+          <img id="qrImg" alt="QR code del questionario" style="width:180px;height:180px;border-radius:16px;border:1px solid var(--border);" />
           <div>
             <a class="btn secondary small" id="downloadQr" style="margin-top:10px;" download="qr-${questionnaire.share_code}.png">Scarica QR code</a>
           </div>
