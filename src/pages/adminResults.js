@@ -65,6 +65,7 @@ export async function renderAdminResults(app, questionnaireId) {
                   <th>Matricola</th>
                   <th>Data</th>
                   ${list.map((q, i) => `<th>D${i + 1}</th>`).join("")}
+                  <th>PDF</th>
                 </tr></thead>
                 <tbody>
                   ${filtered
@@ -83,6 +84,7 @@ export async function renderAdminResults(app, questionnaireId) {
                           return `<td>${escapeHtml(val)}</td>`;
                         })
                         .join("")}
+                      <td><button class="btn small secondary" data-pdf="${r.id}">PDF</button></td>
                     </tr>`
                     )
                     .join("")}
@@ -109,6 +111,39 @@ export async function renderAdminResults(app, questionnaireId) {
       });
       const safeTitle = (questionnaire?.title || "risultati").replace(/[^a-z0-9]+/gi, "_");
       downloadCSV(`${safeTitle}.csv`, rows);
+    });
+
+    main.querySelectorAll("[data-pdf]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const r = filtered.find((x) => x.id === btn.dataset.pdf);
+        if (!r) return;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "...";
+        try {
+          const { downloadResponsePdf } = await import("../utils/pdf.js");
+          await downloadResponsePdf({
+            questionnaireTitle: questionnaire?.title || "Questionario",
+            respondentName: r.respondent_name,
+            matricola: r.matricola,
+            submittedAt: r.submitted_at,
+            items: list.map((q) => {
+              const val = cellValue(r, q);
+              return {
+                questionText: q.text,
+                answerText: q.type === "photo" ? "" : val,
+                photoUrl: q.type === "photo" ? val || null : null,
+              };
+            }),
+          });
+        } catch (err) {
+          console.error(err);
+          alert("Errore nella generazione del PDF.");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      });
     });
   }
 

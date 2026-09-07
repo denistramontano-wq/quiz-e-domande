@@ -80,6 +80,11 @@ export async function renderAdminEditor(app, questionnaireId) {
           <input type="checkbox" id="randomize" ${questionnaire.randomize_questions ? "checked" : ""} style="width:auto;" />
           Mostra le domande in ordine casuale a ogni utente
         </label>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <input type="checkbox" id="subsetEnabled" ${questionnaire.random_subset_enabled ? "checked" : ""} style="width:auto;" />
+          Estrai solo 10 domande casuali per ogni utente (se il questionario ne ha di piu')
+        </label>
       </div>
 
       <div class="card">
@@ -150,6 +155,14 @@ export async function renderAdminEditor(app, questionnaireId) {
       await supabase
         .from("questionnaires")
         .update({ randomize_questions: e.target.checked })
+        .eq("id", questionnaire.id);
+    });
+
+    main.querySelector("#subsetEnabled").addEventListener("change", async (e) => {
+      questionnaire.random_subset_enabled = e.target.checked;
+      await supabase
+        .from("questionnaires")
+        .update({ random_subset_enabled: e.target.checked })
         .eq("id", questionnaire.id);
     });
 

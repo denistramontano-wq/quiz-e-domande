@@ -35,7 +35,10 @@ export async function renderRespond(app, code) {
     q.question_options.sort((a, b) => a.order_index - b.order_index);
   });
 
-  if (questionnaire.randomize_questions) {
+  const SUBSET_SIZE = 10;
+  if (questionnaire.random_subset_enabled) {
+    questions = shuffle(questions).slice(0, Math.min(SUBSET_SIZE, questions.length));
+  } else if (questionnaire.randomize_questions) {
     questions = shuffle(questions);
   }
 
@@ -138,8 +141,8 @@ export async function renderRespond(app, code) {
       submitBtn.disabled = true;
       submitBtn.textContent = "Invio in corso...";
       try {
-        await submitResponses(list);
-        renderThankYou();
+        const submittedAt = await submitResponses(list);
+        renderThankYou(list, submittedAt);
       } catch (err) {
         formErr.textContent = "Si e' verificato un errore nell'invio. Riprova.";
         formErr.style.display = "block";
@@ -320,18 +323,70 @@ export async function renderRespond(app, code) {
         await supabase.from("answer_options").insert(rows);
       }
     }
+
+    return response.submitted_at;
   }
 
-  function renderThankYou() {
+  function buildPdfItems(list) {
+    return list.map((q) => {
+      const a = state.answers[q.id];
+      let answerText = "";
+      let photoUrl = null;
+
+      if (q.type === "open") {
+        answerText = a || "";
+      } else if (q.type === "true_false") {
+        answerText = a === true ? "Vero" : a === false ? "Falso" : "";
+      } else if (q.type === "photo") {
+        photoUrl = a || null;
+      } else if (q.type === "single_choice") {
+        const opt = q.question_options.find((o) => o.id === a);
+        answerText = opt ? opt.text : "";
+      } else if (q.type === "multiple_choice") {
+        const selected = a instanceof Set ? a : new Set();
+        answerText = q.question_options
+          .filter((o) => selected.has(o.id))
+          .map((o) => o.text)
+          .join(", ");
+      }
+
+      return { questionText: q.text, answerText, photoUrl };
+    });
+  }
+
+  function renderThankYou(list, submittedAt) {
     app.innerHTML = `
       ${topbarHTML(questionnaire.title)}
       <main class="container">
         <div class="card center">
           <h2>Grazie, ${escapeHtml(state.name)}!</h2>
           <p>Le tue risposte sono state inviate correttamente.</p>
+          <button class="btn secondary" id="pdfBtn">Scarica PDF delle tue risposte</button>
           <a class="btn secondary" href="#/">Torna alla home</a>
         </div>
       </main>
     `;
+
+    app.querySelector("#pdfBtn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = "Genero il PDF...";
+      try {
+        const { downloadResponsePdf } = await import("../utils/pdf.js");
+        await downloadResponsePdf({
+          questionnaireTitle: questionnaire.title,
+          respondentName: state.name,
+          matricola: state.matricola,
+          submittedAt,
+          items: buildPdfItems(list),
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Non e' stato possibile generare il PDF. Riprova.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Scarica PDF delle tue risposte";
+      }
+    });
   }
 }
