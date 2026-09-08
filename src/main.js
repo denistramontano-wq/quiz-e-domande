@@ -6,6 +6,7 @@ import { renderAdminLogin } from "./pages/adminLogin.js";
 import { renderAdminDashboard } from "./pages/adminDashboard.js";
 import { renderAdminEditor } from "./pages/adminEditor.js";
 import { renderAdminResults } from "./pages/adminResults.js";
+import { renderAdminResponseDetail } from "./pages/adminResponseDetail.js";
 
 const app = document.getElementById("app");
 
@@ -34,6 +35,9 @@ async function router() {
     }
     if (parts[1] === "questionnaire" && parts[2]) {
       if (parts[3] === "results") {
+        if (parts[4]) {
+          return renderAdminResponseDetail(app, parts[2], parts[4]);
+        }
         return renderAdminResults(app, parts[2]);
       }
       return renderAdminEditor(app, parts[2]);

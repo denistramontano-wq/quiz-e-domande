@@ -64,7 +64,7 @@ export async function renderAdminEditor(app, questionnaireId) {
     const main = app.querySelector("main");
     main.innerHTML = `
       <div class="card">
-        <h2>${escapeHtml(questionnaire.title)}</h2>
+        <div id="titleView"></div>
         <p class="hint">Condividi questo link con chi deve compilare il questionario:</p>
         <div class="share-box" id="shareUrl">${shareUrl}</div>
         <button class="btn secondary small" id="copyBtn" style="margin-top:10px;">Copia link</button>
@@ -131,6 +131,8 @@ export async function renderAdminEditor(app, questionnaireId) {
       </div>
     `;
 
+    renderTitleView();
+
     main.querySelector("#copyBtn").addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(shareUrl);
@@ -169,6 +171,60 @@ export async function renderAdminEditor(app, questionnaireId) {
     renderOptionsSection();
     wireForm(questions);
     wireQuestionList(questions);
+  }
+
+  function renderTitleView() {
+    const main = app.querySelector("main");
+    const container = main.querySelector("#titleView");
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <h2 style="margin:0;">${escapeHtml(questionnaire.title)}</h2>
+        <button class="btn small secondary" id="editTitleBtn">Rinomina</button>
+      </div>
+    `;
+    main.querySelector("#editTitleBtn").addEventListener("click", renderTitleEdit);
+  }
+
+  function renderTitleEdit() {
+    const main = app.querySelector("main");
+    const container = main.querySelector("#titleView");
+    container.innerHTML = `
+      <label for="titleInput">Titolo del questionario</label>
+      <input type="text" id="titleInput" value="${escapeHtml(questionnaire.title)}" />
+      <div id="titleErr" class="error" style="display:none"></div>
+      <div class="btn-row">
+        <button class="btn small secondary" id="cancelTitle">Annulla</button>
+        <button class="btn small" id="saveTitle">Salva</button>
+      </div>
+    `;
+    const input = container.querySelector("#titleInput");
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+
+    container.querySelector("#cancelTitle").addEventListener("click", renderTitleView);
+    container.querySelector("#saveTitle").addEventListener("click", async () => {
+      const newTitle = input.value.trim();
+      const err = container.querySelector("#titleErr");
+      if (!newTitle) {
+        err.textContent = "Il titolo non puo' essere vuoto.";
+        err.style.display = "block";
+        return;
+      }
+      const { error } = await supabase
+        .from("questionnaires")
+        .update({ title: newTitle })
+        .eq("id", questionnaire.id);
+      if (error) {
+        err.textContent = "Errore durante il salvataggio.";
+        err.style.display = "block";
+        return;
+      }
+      questionnaire.title = newTitle;
+      renderTitleView();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") container.querySelector("#saveTitle").click();
+    });
   }
 
   function renderOptionsSection() {
