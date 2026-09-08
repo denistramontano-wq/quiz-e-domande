@@ -260,16 +260,30 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
     );
     const qBlockHeight = qLines.length * LINE_HEIGHT;
 
+    const contentX = MARGIN + PADDING + INDENT;
+    const contentW = contentWidth - PADDING - INDENT;
+
     let optionRows = [];
     let answerAreaHeight;
     if (q.type === "open") {
       answerAreaHeight = 3 * OPEN_LINE_H;
     } else if (q.type === "true_false") {
-      optionRows = [{ label: "Vero" }, { label: "Falso" }];
+      optionRows = [{ label: "Vero" }, { label: "Falso" }].map((o) => ({ ...o, lines: [o.label] }));
       answerAreaHeight = optionRows.length * OPTION_ROW_H;
     } else if (q.type === "single_choice" || q.type === "multiple_choice" || q.type === "reorder") {
-      optionRows = (q.question_options || []).map((o) => ({ label: o.text, note: o.note }));
-      answerAreaHeight = optionRows.reduce((sum, o) => sum + OPTION_ROW_H + (o.note ? OPTION_NOTE_H : 0), 0);
+      const isReorderType = q.type === "reorder";
+      const availLabelWidth = contentW - (isReorderType ? 26 : 16);
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(9.5);
+      optionRows = (q.question_options || []).map((o) => ({
+        label: o.text,
+        lines: doc.splitTextToSize(o.text || "", availLabelWidth),
+        note: o.note,
+      }));
+      answerAreaHeight = optionRows.reduce(
+        (sum, o) => sum + OPTION_ROW_H + Math.max(0, o.lines.length - 1) * LINE_HEIGHT + (o.note ? OPTION_NOTE_H : 0),
+        0
+      );
     } else if (q.type === "photo") {
       answerAreaHeight = PHOTO_AREA_H;
     } else {
@@ -290,9 +304,6 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
     doc.setTextColor(...TEXT);
     doc.text(qLines, MARGIN + PADDING + INDENT, cursorY);
     cursorY += qBlockHeight + 10;
-
-    const contentX = MARGIN + PADDING + INDENT;
-    const contentW = contentWidth - PADDING - INDENT;
 
     if (q.type === "open") {
       doc.setDrawColor(...MUTED);
@@ -327,8 +338,9 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
         doc.setFont("Carlito", "normal");
         doc.setFontSize(9.5);
         doc.setTextColor(...TEXT);
-        doc.text(o.label, boxX + (isReorder ? 26 : 16), cursorY);
-        cursorY += OPTION_ROW_H;
+        const lines = o.lines || [o.label];
+        doc.text(lines, boxX + (isReorder ? 26 : 16), cursorY);
+        cursorY += OPTION_ROW_H + Math.max(0, lines.length - 1) * LINE_HEIGHT;
         if (o.note) {
           doc.setFontSize(8);
           doc.setTextColor(...MUTED);
@@ -379,6 +391,9 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
     const qLines = doc.splitTextToSize(q.text, textWidth);
     const qBlockHeight = qLines.length * LINE_HEIGHT;
 
+    const contentX = MARGIN + PADDING + INDENT;
+    const contentW = contentWidth - PADDING - INDENT;
+
     let optionRows = [];
     let answerLines = [];
     let answerAreaHeight;
@@ -394,7 +409,7 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
       optionRows = [
         { label: "Vero", correct: q.correct_boolean === true },
         { label: "Falso", correct: q.correct_boolean === false },
-      ];
+      ].map((o) => ({ ...o, lines: [o.label] }));
       answerAreaHeight = optionRows.length * OPTION_ROW_H;
       if (q.correct_boolean !== true && q.correct_boolean !== false) {
         doc.setFontSize(9.5);
@@ -403,8 +418,23 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
         optionRows = [];
       }
     } else if (q.type === "single_choice" || q.type === "multiple_choice") {
-      optionRows = options.map((o) => ({ label: o.text, note: o.note, correct: o.is_correct }));
-      answerAreaHeight = optionRows.reduce((sum, o) => sum + OPTION_ROW_H + (o.note ? OPTION_NOTE_H : 0), 0);
+      const availLabelWidth = contentW - 16;
+      doc.setFontSize(9.5);
+      optionRows = options.map((o) => {
+        // Il font usato per calcolare l'a-capo deve coincidere con quello di
+        // disegno (le opzioni corrette sono in grassetto e piu' larghe).
+        doc.setFont("Carlito", o.is_correct ? "bold" : "normal");
+        return {
+          label: o.text,
+          lines: doc.splitTextToSize(o.text || "", availLabelWidth),
+          note: o.note,
+          correct: o.is_correct,
+        };
+      });
+      answerAreaHeight = optionRows.reduce(
+        (sum, o) => sum + OPTION_ROW_H + Math.max(0, o.lines.length - 1) * LINE_HEIGHT + (o.note ? OPTION_NOTE_H : 0),
+        0
+      );
       if (!options.some((o) => o.is_correct)) {
         doc.setFontSize(9.5);
         answerLines = doc.splitTextToSize("(nessuna risposta corretta impostata)", textWidth);
@@ -412,8 +442,18 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
         optionRows = [];
       }
     } else if (q.type === "reorder") {
-      optionRows = options.map((o, idx) => ({ label: o.text, order: idx + 1 }));
-      answerAreaHeight = optionRows.length * OPTION_ROW_H;
+      const availLabelWidth = contentW - 18;
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(9.5);
+      optionRows = options.map((o, idx) => ({
+        label: o.text,
+        lines: doc.splitTextToSize(o.text || "", availLabelWidth),
+        order: idx + 1,
+      }));
+      answerAreaHeight = optionRows.reduce(
+        (sum, o) => sum + OPTION_ROW_H + Math.max(0, o.lines.length - 1) * LINE_HEIGHT,
+        0
+      );
     } else if (q.type === "photo") {
       doc.setFontSize(9.5);
       answerLines = doc.splitTextToSize("Nessuna risposta esatta applicabile (domanda con foto).", textWidth);
@@ -437,8 +477,6 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
     doc.text(qLines, MARGIN + PADDING + INDENT, cursorY);
     cursorY += qBlockHeight + 10;
 
-    const contentX = MARGIN + PADDING + INDENT;
-
     if (optionRows.length === 0) {
       doc.setFont("Carlito", "normal");
       doc.setFontSize(9.5);
@@ -457,8 +495,9 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
         doc.setFont("Carlito", "normal");
         doc.setFontSize(9.5);
         doc.setTextColor(...TEXT);
-        doc.text(o.label, contentX + 18, cursorY);
-        cursorY += OPTION_ROW_H;
+        const lines = o.lines || [o.label];
+        doc.text(lines, contentX + 18, cursorY);
+        cursorY += OPTION_ROW_H + Math.max(0, lines.length - 1) * LINE_HEIGHT;
       });
     } else {
       const isSingle = q.type === "single_choice" || q.type === "true_false";
@@ -484,8 +523,9 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
         doc.setFont("Carlito", o.correct ? "bold" : "normal");
         doc.setFontSize(9.5);
         doc.setTextColor(...(o.correct ? TEXT : MUTED));
-        doc.text(o.label, boxX + 16, cursorY);
-        cursorY += OPTION_ROW_H;
+        const lines = o.lines || [o.label];
+        doc.text(lines, boxX + 16, cursorY);
+        cursorY += OPTION_ROW_H + Math.max(0, lines.length - 1) * LINE_HEIGHT;
         if (o.note) {
           doc.setFont("Carlito", "normal");
           doc.setFontSize(8);
