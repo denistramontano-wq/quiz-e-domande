@@ -85,6 +85,8 @@ export async function renderAdminEditor(app, questionnaireId) {
           <input type="checkbox" id="subsetEnabled" ${questionnaire.random_subset_enabled ? "checked" : ""} style="width:auto;" />
           Estrai solo 10 domande casuali per ogni utente (se il questionario ne ha di piu')
         </label>
+
+        <button class="btn secondary" id="printBlankBtn" style="margin-top:18px;">Stampa questionario vuoto (PDF)</button>
       </div>
 
       <div class="card">
@@ -166,6 +168,27 @@ export async function renderAdminEditor(app, questionnaireId) {
         .from("questionnaires")
         .update({ random_subset_enabled: e.target.checked })
         .eq("id", questionnaire.id);
+    });
+
+    main.querySelector("#printBlankBtn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Genero il PDF...";
+      try {
+        const { downloadBlankQuestionnairePdf } = await import("../utils/pdf.js");
+        await downloadBlankQuestionnairePdf({
+          title: questionnaire.title,
+          description: questionnaire.description,
+          questions,
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Errore nella generazione del PDF.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     });
 
     renderOptionsSection();
