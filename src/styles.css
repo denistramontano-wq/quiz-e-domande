@@ -13,8 +13,8 @@
   --success: oklch(55% 0.12 155);
   --radius: 22px;
   --radius-sm: 14px;
-  --font-display: "Baloo 2", cursive;
-  --font-body: "Work Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "Carlito", "Calibri", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: "Carlito", "Calibri", -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 * {

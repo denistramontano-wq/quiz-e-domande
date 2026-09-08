@@ -1,9 +1,20 @@
 import { jsPDF } from "jspdf";
+import { CARLITO_REGULAR_BASE64, CARLITO_BOLD_BASE64 } from "../fonts/carlito.js";
 
-const MARGIN = 40;
-const PADDING = 16;
-const LINE_HEIGHT = 15;
-const HEADER_HEIGHT = 118;
+const MARGIN = 36;
+const PADDING = 12;
+const LINE_HEIGHT = 13;
+const HEADER_HEIGHT = 96;
+const CARD_RADIUS = 8;
+
+const BADGE_R = 9;
+const INDENT = BADGE_R * 2 + 8; // spazio riservato al numero prima del testo
+
+const OPTION_ROW_H = 19;
+const OPTION_NOTE_H = 10;
+const OPEN_LINE_H = 19;
+const PHOTO_BOX_H = 38;
+const PHOTO_AREA_H = PHOTO_BOX_H + 12;
 
 const CORAL = [232, 98, 63];
 const CORAL_DARK = [188, 74, 46];
@@ -12,6 +23,15 @@ const TEXT = [45, 40, 35];
 const MUTED = [130, 122, 110];
 const WHITE = [255, 255, 255];
 const LIGHT_ON_CORAL = [252, 228, 218];
+
+function useCarlito(doc) {
+  // Il VFS/i font sono per-istanza: vanno registrati su ogni nuovo documento.
+  doc.addFileToVFS("Carlito-Regular.ttf", CARLITO_REGULAR_BASE64);
+  doc.addFont("Carlito-Regular.ttf", "Carlito", "normal");
+  doc.addFileToVFS("Carlito-Bold.ttf", CARLITO_BOLD_BASE64);
+  doc.addFont("Carlito-Bold.ttf", "Carlito", "bold");
+  doc.setFont("Carlito", "normal");
+}
 
 async function fetchImageAsDataUrl(url) {
   const res = await fetch(url);
@@ -33,28 +53,39 @@ async function fetchImageAsDataUrl(url) {
   return { dataUrl, format, ...dims };
 }
 
+function drawIndexBadge(doc, cx, cy, number) {
+  doc.setFillColor(...CORAL);
+  doc.circle(cx, cy, BADGE_R, "F");
+  doc.setFont("Carlito", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...WHITE);
+  const label = String(number);
+  const textW = doc.getTextWidth(label);
+  doc.text(label, cx - textW / 2, cy + 3);
+}
+
 function drawHeaderBand(doc, { pageWidth, contentWidth, title, subtitleLines }) {
   doc.setFillColor(...CORAL);
   doc.rect(0, 0, pageWidth, HEADER_HEIGHT, "F");
   doc.setFillColor(...CORAL_DARK);
-  doc.rect(0, HEADER_HEIGHT, pageWidth, 5, "F");
+  doc.rect(0, HEADER_HEIGHT, pageWidth, 4, "F");
 
   doc.setTextColor(...WHITE);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(20);
+  doc.setFont("Carlito", "bold");
+  doc.setFontSize(17);
   const titleLines = doc.splitTextToSize(title || "Questionario", contentWidth).slice(0, 2);
-  doc.text(titleLines, MARGIN, 46);
+  doc.text(titleLines, MARGIN, 32);
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
+  doc.setFont("Carlito", "normal");
+  doc.setFontSize(9.5);
   doc.setTextColor(...LIGHT_ON_CORAL);
-  let infoY = 46 + titleLines.length * 20 + 12;
+  let infoY = 32 + titleLines.length * 17 + 10;
   subtitleLines.forEach((line) => {
     doc.text(line, MARGIN, infoY);
-    infoY += 16;
+    infoY += 13;
   });
 
-  return HEADER_HEIGHT + 5;
+  return HEADER_HEIGHT + 4;
 }
 
 function makePaginator(doc, { pageWidth, pageHeight, title, startY }) {
@@ -62,23 +93,23 @@ function makePaginator(doc, { pageWidth, pageHeight, title, startY }) {
 
   function drawContinuationHeader() {
     doc.setTextColor(...CORAL_DARK);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
     doc.text(title || "Questionario", MARGIN, MARGIN);
     doc.setDrawColor(...CORAL);
-    doc.setLineWidth(1.5);
-    doc.line(MARGIN, MARGIN + 10, pageWidth - MARGIN, MARGIN + 10);
+    doc.setLineWidth(1.2);
+    doc.line(MARGIN, MARGIN + 8, pageWidth - MARGIN, MARGIN + 8);
   }
 
   function newPage() {
     doc.addPage();
     state.page += 1;
     drawContinuationHeader();
-    state.y = MARGIN + 34;
+    state.y = MARGIN + 26;
   }
 
   function ensureSpace(needed) {
-    if (state.y + needed > pageHeight - 50) {
+    if (state.y + needed > pageHeight - 44) {
       newPage();
     }
   }
@@ -90,11 +121,11 @@ function drawFooters(doc, pageWidth, pageHeight) {
   const pageCount = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pageCount; p++) {
     doc.setPage(p);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
+    doc.setFont("Carlito", "normal");
+    doc.setFontSize(8);
     doc.setTextColor(...MUTED);
-    doc.text("Generato con Quiz e Domande", MARGIN, pageHeight - 24);
-    doc.text(`Pagina ${p} di ${pageCount}`, pageWidth - MARGIN, pageHeight - 24, { align: "right" });
+    doc.text("Generato con Quiz e Domande", MARGIN, pageHeight - 20);
+    doc.text(`Pagina ${p} di ${pageCount}`, pageWidth - MARGIN, pageHeight - 20, { align: "right" });
   }
 }
 
@@ -109,9 +140,11 @@ export async function downloadResponsePdf({
   items,
 }) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
+  useCarlito(doc);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const contentWidth = pageWidth - MARGIN * 2;
+  const textWidth = contentWidth - PADDING * 2 - INDENT;
 
   const subtitleLine = `${respondentName}   •   Matricola ${matricola}   •   ${new Date(submittedAt).toLocaleString("it-IT")}`;
   const headerBottom = drawHeaderBand(doc, {
@@ -124,15 +157,15 @@ export async function downloadResponsePdf({
     pageWidth,
     pageHeight,
     title: questionnaireTitle,
-    startY: headerBottom + 29,
+    startY: headerBottom + 22,
   });
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(12.5);
-    const qLines = doc.splitTextToSize(`${i + 1}. ${item.questionText}`, contentWidth - PADDING * 2);
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
+    const qLines = doc.splitTextToSize(item.questionText, textWidth);
     const qBlockHeight = qLines.length * LINE_HEIGHT;
 
     let answerLines = [];
@@ -141,46 +174,49 @@ export async function downloadResponsePdf({
       try {
         imgMeta = await fetchImageAsDataUrl(item.photoUrl);
       } catch {
-        answerLines = doc.splitTextToSize(`Foto allegata: ${item.photoUrl}`, contentWidth - PADDING * 2);
+        doc.setFontSize(9.5);
+        answerLines = doc.splitTextToSize(`Foto allegata: ${item.photoUrl}`, textWidth);
       }
     } else {
-      doc.setFontSize(11);
-      answerLines = doc.splitTextToSize(item.answerText || "(nessuna risposta)", contentWidth - PADDING * 2);
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(9.5);
+      answerLines = doc.splitTextToSize(item.answerText || "(nessuna risposta)", textWidth);
     }
 
     let imgWidth = 0;
     let imgHeight = 0;
     if (imgMeta) {
-      imgWidth = Math.min(contentWidth - PADDING * 2, 240);
+      imgWidth = Math.min(textWidth, 200);
       imgHeight = imgMeta.height * (imgWidth / imgMeta.width);
     }
 
     const answerBlockHeight = imgMeta ? imgHeight : answerLines.length * (LINE_HEIGHT - 1);
-    const cardHeight = PADDING * 2 + qBlockHeight + 10 + answerBlockHeight;
+    const cardHeight = PADDING * 2 + Math.max(qBlockHeight, BADGE_R * 2) + 8 + answerBlockHeight;
 
-    paginator.ensureSpace(cardHeight + 16);
+    paginator.ensureSpace(cardHeight + 12);
     const y = paginator.state.y;
 
     doc.setFillColor(...CREAM);
-    doc.roundedRect(MARGIN, y, contentWidth, cardHeight, 10, 10, "F");
+    doc.roundedRect(MARGIN, y, contentWidth, cardHeight, CARD_RADIUS, CARD_RADIUS, "F");
+    drawIndexBadge(doc, MARGIN + PADDING + BADGE_R, y + PADDING + BADGE_R, i + 1);
 
-    let cursorY = y + PADDING + 11;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12.5);
+    let cursorY = y + PADDING + 9;
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
     doc.setTextColor(...TEXT);
-    doc.text(qLines, MARGIN + PADDING, cursorY);
-    cursorY += qBlockHeight + 10;
+    doc.text(qLines, MARGIN + PADDING + INDENT, cursorY);
+    cursorY += qBlockHeight + 8;
 
     if (imgMeta) {
-      doc.addImage(imgMeta.dataUrl, imgMeta.format, MARGIN + PADDING, cursorY - 10, imgWidth, imgHeight);
+      doc.addImage(imgMeta.dataUrl, imgMeta.format, MARGIN + PADDING + INDENT, cursorY - 8, imgWidth, imgHeight);
     } else {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(9.5);
       doc.setTextColor(...MUTED);
-      doc.text(answerLines, MARGIN + PADDING, cursorY);
+      doc.text(answerLines, MARGIN + PADDING + INDENT, cursorY);
     }
 
-    paginator.state.y = y + cardHeight + 16;
+    paginator.state.y = y + cardHeight + 12;
   }
 
   drawFooters(doc, pageWidth, pageHeight);
@@ -195,109 +231,114 @@ export async function downloadResponsePdf({
  */
 export async function downloadBlankQuestionnairePdf({ title, description, questions }) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
+  useCarlito(doc);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const contentWidth = pageWidth - MARGIN * 2;
+  const textWidth = contentWidth - PADDING * 2 - INDENT;
 
   const subtitleLines = [];
   if (description) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
+    doc.setFont("Carlito", "normal");
+    doc.setFontSize(9.5);
     subtitleLines.push(...doc.splitTextToSize(description, contentWidth).slice(0, 2));
   }
   subtitleLines.push("Nome e cognome: __________________________   Matricola: _________");
 
   const headerBottom = drawHeaderBand(doc, { pageWidth, contentWidth, title, subtitleLines });
-  const paginator = makePaginator(doc, { pageWidth, pageHeight, title, startY: headerBottom + 29 });
+  const paginator = makePaginator(doc, { pageWidth, pageHeight, title, startY: headerBottom + 22 });
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12.5);
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
     const reorderHint = q.type === "reorder" ? "  (scrivi l'ordine nelle caselle)" : "";
     const qLines = doc.splitTextToSize(
-      `${i + 1}. ${q.text}${q.required ? "" : "  (facoltativa)"}${reorderHint}`,
-      contentWidth - PADDING * 2
+      `${q.text}${q.required ? "" : "  (facoltativa)"}${reorderHint}`,
+      textWidth
     );
     const qBlockHeight = qLines.length * LINE_HEIGHT;
 
     let optionRows = [];
     let answerAreaHeight;
     if (q.type === "open") {
-      answerAreaHeight = 3 * 22;
+      answerAreaHeight = 3 * OPEN_LINE_H;
     } else if (q.type === "true_false") {
       optionRows = [{ label: "Vero" }, { label: "Falso" }];
-      answerAreaHeight = optionRows.length * 22;
+      answerAreaHeight = optionRows.length * OPTION_ROW_H;
     } else if (q.type === "single_choice" || q.type === "multiple_choice" || q.type === "reorder") {
       optionRows = (q.question_options || []).map((o) => ({ label: o.text, note: o.note }));
-      answerAreaHeight = optionRows.reduce((sum, o) => sum + 22 + (o.note ? 12 : 0), 0);
+      answerAreaHeight = optionRows.reduce((sum, o) => sum + OPTION_ROW_H + (o.note ? OPTION_NOTE_H : 0), 0);
     } else if (q.type === "photo") {
-      answerAreaHeight = 60;
+      answerAreaHeight = PHOTO_AREA_H;
     } else {
-      answerAreaHeight = 22;
+      answerAreaHeight = OPTION_ROW_H;
     }
 
-    const cardHeight = PADDING * 2 + qBlockHeight + 14 + answerAreaHeight;
-    paginator.ensureSpace(cardHeight + 16);
+    const cardHeight = PADDING * 2 + Math.max(qBlockHeight, BADGE_R * 2) + 10 + answerAreaHeight;
+    paginator.ensureSpace(cardHeight + 12);
     const y = paginator.state.y;
 
     doc.setFillColor(...CREAM);
-    doc.roundedRect(MARGIN, y, contentWidth, cardHeight, 10, 10, "F");
+    doc.roundedRect(MARGIN, y, contentWidth, cardHeight, CARD_RADIUS, CARD_RADIUS, "F");
+    drawIndexBadge(doc, MARGIN + PADDING + BADGE_R, y + PADDING + BADGE_R, i + 1);
 
-    let cursorY = y + PADDING + 11;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12.5);
+    let cursorY = y + PADDING + 9;
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
     doc.setTextColor(...TEXT);
-    doc.text(qLines, MARGIN + PADDING, cursorY);
-    cursorY += qBlockHeight + 14;
+    doc.text(qLines, MARGIN + PADDING + INDENT, cursorY);
+    cursorY += qBlockHeight + 10;
+
+    const contentX = MARGIN + PADDING + INDENT;
+    const contentW = contentWidth - PADDING - INDENT;
 
     if (q.type === "open") {
       doc.setDrawColor(...MUTED);
-      doc.setLineWidth(0.75);
+      doc.setLineWidth(0.6);
       for (let l = 0; l < 3; l++) {
-        doc.line(MARGIN + PADDING, cursorY, MARGIN + contentWidth - PADDING, cursorY);
-        cursorY += 22;
+        doc.line(contentX, cursorY, MARGIN + contentWidth - PADDING, cursorY);
+        cursorY += OPEN_LINE_H;
       }
     } else if (q.type === "photo") {
       doc.setDrawColor(...MUTED);
-      doc.setLineWidth(1);
-      doc.roundedRect(MARGIN + PADDING, cursorY, contentWidth - PADDING * 2, 46, 6, 6, "S");
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(10);
+      doc.setLineWidth(0.8);
+      doc.roundedRect(contentX, cursorY, contentW, PHOTO_BOX_H, 6, 6, "S");
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(8.5);
       doc.setTextColor(...MUTED);
-      doc.text("Spazio per allegare la foto", MARGIN + PADDING + 10, cursorY + 27);
+      doc.text("Spazio per allegare la foto", contentX + 8, cursorY + PHOTO_BOX_H / 2 + 3);
     } else {
       const isSingle = q.type === "single_choice";
       const isReorder = q.type === "reorder";
       optionRows.forEach((o) => {
-        const boxX = MARGIN + PADDING;
-        const boxY = cursorY - 9;
+        const boxX = contentX;
+        const boxY = cursorY - 8;
         doc.setDrawColor(...MUTED);
-        doc.setLineWidth(1);
+        doc.setLineWidth(0.8);
         if (isReorder) {
-          doc.rect(boxX, boxY, 20, 14, "S");
+          doc.rect(boxX, boxY, 18, 12, "S");
         } else if (isSingle) {
-          doc.circle(boxX + 5, boxY + 5, 5, "S");
+          doc.circle(boxX + 4.5, boxY + 4.5, 4.5, "S");
         } else {
-          doc.rect(boxX, boxY, 10, 10, "S");
+          doc.rect(boxX, boxY, 9, 9, "S");
         }
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(11);
+        doc.setFont("Carlito", "normal");
+        doc.setFontSize(9.5);
         doc.setTextColor(...TEXT);
-        doc.text(o.label, boxX + (isReorder ? 30 : 18), cursorY);
-        cursorY += 22;
+        doc.text(o.label, boxX + (isReorder ? 26 : 16), cursorY);
+        cursorY += OPTION_ROW_H;
         if (o.note) {
-          doc.setFont("helvetica", "italic");
-          doc.setFontSize(9);
+          doc.setFontSize(8);
           doc.setTextColor(...MUTED);
-          doc.text(o.note, boxX + 18, cursorY - 10);
-          cursorY += 12;
+          doc.text(o.note, boxX + 16, cursorY - 9);
+          cursorY += OPTION_NOTE_H;
         }
       });
     }
 
-    paginator.state.y = y + cardHeight + 16;
+    paginator.state.y = y + cardHeight + 12;
   }
 
   drawFooters(doc, pageWidth, pageHeight);
