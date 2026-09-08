@@ -25,8 +25,8 @@ export async function renderRespond(app, code) {
   }
 
   let { data: questions } = await supabase
-    .from("questions")
-    .select("*, question_options(*)")
+    .from("public_questions")
+    .select("*")
     .eq("questionnaire_id", questionnaire.id)
     .order("order_index", { ascending: true });
 

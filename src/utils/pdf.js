@@ -346,3 +346,161 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
   const safeTitle = (title || "questionario").replace(/[^a-z0-9]+/gi, "_");
   doc.save(`${safeTitle}_vuoto.pdf`);
 }
+
+/**
+ * questions: array di { type, text, required, correct_boolean, correct_answer_text,
+ *   question_options: [{ text, note, is_correct, order_index }] } (opzioni gia' ordinate)
+ */
+export async function downloadAnswerKeyPdf({ title, description, questions }) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  useCarlito(doc);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const contentWidth = pageWidth - MARGIN * 2;
+  const textWidth = contentWidth - PADDING * 2 - INDENT;
+
+  const subtitleLines = [];
+  if (description) {
+    doc.setFont("Carlito", "normal");
+    doc.setFontSize(9.5);
+    subtitleLines.push(...doc.splitTextToSize(description, contentWidth).slice(0, 2));
+  }
+  subtitleLines.push("Chiave delle risposte — solo per l'amministratore");
+
+  const headerBottom = drawHeaderBand(doc, { pageWidth, contentWidth, title, subtitleLines });
+  const paginator = makePaginator(doc, { pageWidth, pageHeight, title, startY: headerBottom + 22 });
+
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const options = q.question_options || [];
+
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
+    const qLines = doc.splitTextToSize(q.text, textWidth);
+    const qBlockHeight = qLines.length * LINE_HEIGHT;
+
+    let optionRows = [];
+    let answerLines = [];
+    let answerAreaHeight;
+
+    if (q.type === "open") {
+      doc.setFontSize(9.5);
+      answerLines = doc.splitTextToSize(
+        q.correct_answer_text || "(nessuna risposta di riferimento impostata)",
+        textWidth
+      );
+      answerAreaHeight = answerLines.length * (LINE_HEIGHT - 1);
+    } else if (q.type === "true_false") {
+      optionRows = [
+        { label: "Vero", correct: q.correct_boolean === true },
+        { label: "Falso", correct: q.correct_boolean === false },
+      ];
+      answerAreaHeight = optionRows.length * OPTION_ROW_H;
+      if (q.correct_boolean !== true && q.correct_boolean !== false) {
+        doc.setFontSize(9.5);
+        answerLines = doc.splitTextToSize("(nessuna risposta corretta impostata)", textWidth);
+        answerAreaHeight = answerLines.length * (LINE_HEIGHT - 1);
+        optionRows = [];
+      }
+    } else if (q.type === "single_choice" || q.type === "multiple_choice") {
+      optionRows = options.map((o) => ({ label: o.text, note: o.note, correct: o.is_correct }));
+      answerAreaHeight = optionRows.reduce((sum, o) => sum + OPTION_ROW_H + (o.note ? OPTION_NOTE_H : 0), 0);
+      if (!options.some((o) => o.is_correct)) {
+        doc.setFontSize(9.5);
+        answerLines = doc.splitTextToSize("(nessuna risposta corretta impostata)", textWidth);
+        answerAreaHeight = answerLines.length * (LINE_HEIGHT - 1);
+        optionRows = [];
+      }
+    } else if (q.type === "reorder") {
+      optionRows = options.map((o, idx) => ({ label: o.text, order: idx + 1 }));
+      answerAreaHeight = optionRows.length * OPTION_ROW_H;
+    } else if (q.type === "photo") {
+      doc.setFontSize(9.5);
+      answerLines = doc.splitTextToSize("Nessuna risposta esatta applicabile (domanda con foto).", textWidth);
+      answerAreaHeight = answerLines.length * (LINE_HEIGHT - 1);
+    } else {
+      answerAreaHeight = OPTION_ROW_H;
+    }
+
+    const cardHeight = PADDING * 2 + Math.max(qBlockHeight, BADGE_R * 2) + 10 + answerAreaHeight;
+    paginator.ensureSpace(cardHeight + 12);
+    const y = paginator.state.y;
+
+    doc.setFillColor(...CREAM);
+    doc.roundedRect(MARGIN, y, contentWidth, cardHeight, CARD_RADIUS, CARD_RADIUS, "F");
+    drawIndexBadge(doc, MARGIN + PADDING + BADGE_R, y + PADDING + BADGE_R, i + 1);
+
+    let cursorY = y + PADDING + 9;
+    doc.setFont("Carlito", "bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(...TEXT);
+    doc.text(qLines, MARGIN + PADDING + INDENT, cursorY);
+    cursorY += qBlockHeight + 10;
+
+    const contentX = MARGIN + PADDING + INDENT;
+
+    if (optionRows.length === 0) {
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(...MUTED);
+      doc.text(answerLines, contentX, cursorY);
+    } else if (q.type === "reorder") {
+      optionRows.forEach((o) => {
+        doc.setFillColor(...CORAL);
+        doc.circle(contentX + 5, cursorY - 8 + 4.5, 5.5, "F");
+        doc.setFont("Carlito", "bold");
+        doc.setFontSize(7.5);
+        doc.setTextColor(...WHITE);
+        const numLabel = String(o.order);
+        const numW = doc.getTextWidth(numLabel);
+        doc.text(numLabel, contentX + 5 - numW / 2, cursorY - 8 + 4.5 + 2.6);
+        doc.setFont("Carlito", "normal");
+        doc.setFontSize(9.5);
+        doc.setTextColor(...TEXT);
+        doc.text(o.label, contentX + 18, cursorY);
+        cursorY += OPTION_ROW_H;
+      });
+    } else {
+      const isSingle = q.type === "single_choice" || q.type === "true_false";
+      optionRows.forEach((o) => {
+        const boxX = contentX;
+        const boxY = cursorY - 8;
+        if (o.correct) {
+          doc.setFillColor(...CORAL);
+          if (isSingle) {
+            doc.circle(boxX + 4.5, boxY + 4.5, 4.5, "F");
+          } else {
+            doc.roundedRect(boxX, boxY, 9, 9, 2, 2, "F");
+          }
+        } else {
+          doc.setDrawColor(...MUTED);
+          doc.setLineWidth(0.8);
+          if (isSingle) {
+            doc.circle(boxX + 4.5, boxY + 4.5, 4.5, "S");
+          } else {
+            doc.rect(boxX, boxY, 9, 9, "S");
+          }
+        }
+        doc.setFont("Carlito", o.correct ? "bold" : "normal");
+        doc.setFontSize(9.5);
+        doc.setTextColor(...(o.correct ? TEXT : MUTED));
+        doc.text(o.label, boxX + 16, cursorY);
+        cursorY += OPTION_ROW_H;
+        if (o.note) {
+          doc.setFont("Carlito", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(...MUTED);
+          doc.text(o.note, boxX + 16, cursorY - 9);
+          cursorY += OPTION_NOTE_H;
+        }
+      });
+    }
+
+    paginator.state.y = y + cardHeight + 12;
+  }
+
+  drawFooters(doc, pageWidth, pageHeight);
+
+  const safeTitle = (title || "questionario").replace(/[^a-z0-9]+/gi, "_");
+  doc.save(`${safeTitle}_chiave_risposte.pdf`);
+}

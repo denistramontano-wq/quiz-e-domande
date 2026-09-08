@@ -22,9 +22,11 @@ function blankForm() {
     text: "",
     required: true,
     imageUrl: null,
+    correctBoolean: null,
+    correctAnswerText: "",
     options: [
-      { text: "", note: "" },
-      { text: "", note: "" },
+      { text: "", note: "", isCorrect: false },
+      { text: "", note: "", isCorrect: false },
     ],
   };
 }
@@ -89,7 +91,10 @@ export async function renderAdminEditor(app, questionnaireId) {
           Estrai solo 10 domande casuali per ogni utente (se il questionario ne ha di piu')
         </label>
 
-        <button class="btn secondary" id="printBlankBtn" style="margin-top:18px;">Stampa questionario vuoto (PDF)</button>
+        <div class="btn-row">
+          <button class="btn secondary" id="printBlankBtn">Questionario vuoto (PDF)</button>
+          <button class="btn secondary" id="printAnswerKeyBtn">Chiave delle risposte (PDF)</button>
+        </div>
       </div>
 
       <div class="card">
@@ -117,6 +122,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           Risposta obbligatoria
         </label>
 
+        <div id="correctAnswerSection"></div>
         <div id="optionsSection"></div>
 
         <div id="formErr" class="error" style="display:none"></div>
@@ -194,6 +200,28 @@ export async function renderAdminEditor(app, questionnaireId) {
       }
     });
 
+    main.querySelector("#printAnswerKeyBtn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Genero il PDF...";
+      try {
+        const { downloadAnswerKeyPdf } = await import("../utils/pdf.js");
+        await downloadAnswerKeyPdf({
+          title: questionnaire.title,
+          description: questionnaire.description,
+          questions,
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Errore nella generazione del PDF.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+
+    renderCorrectAnswerSection();
     renderOptionsSection();
     wireForm(questions);
     wireQuestionList(questions);
@@ -253,15 +281,62 @@ export async function renderAdminEditor(app, questionnaireId) {
     });
   }
 
+  function renderCorrectAnswerSection() {
+    const section = document.getElementById("correctAnswerSection");
+    if (form.type === "open") {
+      section.innerHTML = `
+        <label for="correctText">Risposta di riferimento (facoltativa)</label>
+        <textarea id="correctText" placeholder="Risposta corretta o traccia di correzione: la vedi solo tu, mai chi compila.">${escapeHtml(form.correctAnswerText)}</textarea>
+      `;
+      section.querySelector("#correctText").addEventListener("input", (e) => {
+        form.correctAnswerText = e.target.value;
+      });
+    } else if (form.type === "true_false") {
+      section.innerHTML = `
+        <label>Risposta corretta (facoltativa)</label>
+        <div class="true-false-row" id="correctBoolPicker">
+          <button type="button" data-value="true" class="${form.correctBoolean === true ? "selected" : ""}">Vero</button>
+          <button type="button" data-value="false" class="${form.correctBoolean === false ? "selected" : ""}">Falso</button>
+        </div>
+        ${
+          form.correctBoolean !== null
+            ? '<button type="button" class="btn secondary small" id="clearCorrectBool" style="margin-top:8px;">Rimuovi risposta corretta</button>'
+            : ""
+        }
+      `;
+      section.querySelectorAll("#correctBoolPicker button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          form.correctBoolean = btn.dataset.value === "true";
+          renderCorrectAnswerSection();
+        });
+      });
+      const clearBtn = section.querySelector("#clearCorrectBool");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+          form.correctBoolean = null;
+          renderCorrectAnswerSection();
+        });
+      }
+    } else {
+      section.innerHTML = "";
+    }
+  }
+
   function renderOptionsSection() {
     const section = document.getElementById("optionsSection");
     if (!OPTIONS_TYPES.includes(form.type)) {
       section.innerHTML = "";
       return;
     }
+    const showCorrectMarking = form.type === "single_choice" || form.type === "multiple_choice";
     section.innerHTML = `
       <label>${form.type === "reorder" ? "Elementi da riordinare (in ordine corretto)" : "Opzioni di risposta"}</label>
       ${form.type === "reorder" ? '<p class="hint">L\'utente ricevera\' questi elementi in ordine casuale e dovra\' riordinarli. L\'ordine qui sotto e\' quello di riferimento.</p>' : ""}
+      ${
+        showCorrectMarking
+          ? `<p class="hint">Seleziona ${form.type === "single_choice" ? "l'opzione corretta" : "le opzioni corrette"} (facoltativo, visibile solo a te).</p>`
+          : ""
+      }
       <div id="optionsList">
         ${form.options
           .map(
@@ -269,6 +344,14 @@ export async function renderAdminEditor(app, questionnaireId) {
           <div class="card" style="padding:10px;margin-bottom:8px;" data-opt-idx="${idx}">
             <input type="text" placeholder="Testo opzione" class="opt-text" value="${escapeHtml(o.text)}" />
             <input type="text" placeholder="Nota (facoltativa)" class="opt-note" value="${escapeHtml(o.note)}" style="margin-top:8px;" />
+            ${
+              showCorrectMarking
+                ? `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                    <input type="${form.type === "single_choice" ? "radio" : "checkbox"}" name="optCorrect" class="opt-correct" style="width:auto;" ${o.isCorrect ? "checked" : ""} />
+                    Risposta corretta
+                  </label>`
+                : ""
+            }
             <button type="button" class="icon-btn danger" data-remove-opt="${idx}" style="margin-top:4px;">Rimuovi opzione</button>
           </div>`
           )
@@ -283,6 +366,14 @@ export async function renderAdminEditor(app, questionnaireId) {
     section.querySelectorAll(".opt-note").forEach((el, idx) => {
       el.addEventListener("input", () => (form.options[idx].note = el.value));
     });
+    section.querySelectorAll(".opt-correct").forEach((el, idx) => {
+      el.addEventListener("change", () => {
+        if (form.type === "single_choice") {
+          form.options.forEach((o) => (o.isCorrect = false));
+        }
+        form.options[idx].isCorrect = el.checked;
+      });
+    });
     section.querySelectorAll("[data-remove-opt]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const idx = Number(btn.dataset.removeOpt);
@@ -291,7 +382,7 @@ export async function renderAdminEditor(app, questionnaireId) {
       });
     });
     section.querySelector("#addOptBtn").addEventListener("click", () => {
-      form.options.push({ text: "", note: "" });
+      form.options.push({ text: "", note: "", isCorrect: false });
       renderOptionsSection();
     });
   }
@@ -356,7 +447,9 @@ export async function renderAdminEditor(app, questionnaireId) {
 
     let cleanOptions = [];
     if (OPTIONS_TYPES.includes(form.type)) {
-      cleanOptions = form.options.map((o) => ({ text: o.text.trim(), note: o.note.trim() })).filter((o) => o.text);
+      cleanOptions = form.options
+        .map((o) => ({ text: o.text.trim(), note: o.note.trim(), isCorrect: !!o.isCorrect }))
+        .filter((o) => o.text);
       if (cleanOptions.length < 2) {
         formErr.textContent =
           form.type === "reorder"
@@ -380,6 +473,8 @@ export async function renderAdminEditor(app, questionnaireId) {
             text,
             image_url: form.imageUrl,
             required: form.required,
+            correct_boolean: form.type === "true_false" ? form.correctBoolean : null,
+            correct_answer_text: form.type === "open" ? form.correctAnswerText.trim() || null : null,
           })
           .eq("id", questionId);
         await supabase.from("question_options").delete().eq("question_id", questionId);
@@ -393,6 +488,8 @@ export async function renderAdminEditor(app, questionnaireId) {
             text,
             image_url: form.imageUrl,
             required: form.required,
+            correct_boolean: form.type === "true_false" ? form.correctBoolean : null,
+            correct_answer_text: form.type === "open" ? form.correctAnswerText.trim() || null : null,
             order_index: maxOrder + 1,
           })
           .select()
@@ -407,6 +504,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           text: o.text,
           note: o.note || null,
           order_index: idx,
+          is_correct: o.isCorrect,
         }));
         await supabase.from("question_options").insert(rows);
       }
@@ -425,10 +523,19 @@ export async function renderAdminEditor(app, questionnaireId) {
     const optionsPreview =
       q.question_options && q.question_options.length > 0
         ? `<ul style="margin:8px 0 0;padding-left:18px;">${q.question_options
-            .map((o) => `<li>${escapeHtml(o.text)}${o.note ? ` <span class="hint">(${escapeHtml(o.note)})</span>` : ""}</li>`)
+            .map(
+              (o) =>
+                `<li>${escapeHtml(o.text)}${o.is_correct ? ' <strong style="color:var(--success);">(corretta)</strong>' : ""}${o.note ? ` <span class="hint">(${escapeHtml(o.note)})</span>` : ""}</li>`
+            )
             .join("")}</ul>`
         : "";
     const img = q.image_url ? `<img src="${q.image_url}" class="question-image" style="max-height:120px;" />` : "";
+    const correctInfo =
+      q.type === "true_false" && (q.correct_boolean === true || q.correct_boolean === false)
+        ? `<p class="hint" style="color:var(--success);margin-top:6px;">Risposta corretta: ${q.correct_boolean ? "Vero" : "Falso"}</p>`
+        : q.type === "open" && q.correct_answer_text
+          ? `<p class="hint" style="margin-top:6px;">Risposta di riferimento: ${escapeHtml(q.correct_answer_text)}</p>`
+          : "";
 
     return `
       <div class="list-item" style="flex-direction:column;align-items:stretch;" data-question="${q.id}">
@@ -437,6 +544,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           <strong style="margin-top:6px;">${i + 1}. ${escapeHtml(q.text)}</strong>
           ${img}
           ${optionsPreview}
+          ${correctInfo}
         </div>
         <div class="btn-row" style="margin-top:10px;flex-wrap:wrap;">
           <button class="btn small secondary" data-action="up" ${i === 0 ? "disabled" : ""}>&uarr; Su</button>
@@ -459,12 +567,14 @@ export async function renderAdminEditor(app, questionnaireId) {
           text: q.text,
           required: q.required,
           imageUrl: q.image_url,
+          correctBoolean: q.correct_boolean === true || q.correct_boolean === false ? q.correct_boolean : null,
+          correctAnswerText: q.correct_answer_text || "",
           options:
             q.question_options.length > 0
-              ? q.question_options.map((o) => ({ text: o.text, note: o.note || "" }))
+              ? q.question_options.map((o) => ({ text: o.text, note: o.note || "", isCorrect: !!o.is_correct }))
               : [
-                  { text: "", note: "" },
-                  { text: "", note: "" },
+                  { text: "", note: "", isCorrect: false },
+                  { text: "", note: "", isCorrect: false },
                 ],
         };
         render(questions);
@@ -510,6 +620,8 @@ export async function renderAdminEditor(app, questionnaireId) {
         text: `${q.text} (copia)`,
         image_url: q.image_url,
         required: q.required,
+        correct_boolean: q.correct_boolean === true || q.correct_boolean === false ? q.correct_boolean : null,
+        correct_answer_text: q.correct_answer_text || null,
         order_index: maxOrder + 1,
       })
       .select()
@@ -522,6 +634,7 @@ export async function renderAdminEditor(app, questionnaireId) {
         text: o.text,
         note: o.note || null,
         order_index: o.order_index,
+        is_correct: !!o.is_correct,
       }));
       await supabase.from("question_options").insert(rows);
     }
