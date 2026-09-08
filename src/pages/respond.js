@@ -100,6 +100,13 @@ export async function renderRespond(app, code) {
 
   function renderForm() {
     const list = questions || [];
+
+    list.forEach((q) => {
+      if (q.type === "reorder" && !state.answers[q.id]) {
+        state.answers[q.id] = shuffle(q.question_options.map((o) => o.id));
+      }
+    });
+
     if (list.length === 0) {
       app.innerHTML = `
         ${topbarHTML(questionnaire.title)}
@@ -160,6 +167,7 @@ export async function renderRespond(app, code) {
     if (q.type === "multiple_choice") return !!(a && a.size > 0);
     if (q.type === "true_false") return a === true || a === false;
     if (q.type === "photo") return !!a;
+    if (q.type === "reorder") return Array.isArray(a) && a.length === q.question_options.length;
     return false;
   }
 
@@ -199,6 +207,8 @@ export async function renderRespond(app, code) {
         <input type="file" accept="image/*" capture="environment" data-qid="${q.id}" data-kind="photo" />
         <div class="hint" data-status-for="${q.id}"></div>
         <img class="photo-preview" data-preview-for="${q.id}" style="display:none" />`;
+    } else if (q.type === "reorder") {
+      control = `<div class="reorder-list" data-kind="reorder" data-qid="${q.id}">${reorderItemsHTML(q)}</div>`;
     }
 
     return `
@@ -211,7 +221,52 @@ export async function renderRespond(app, code) {
     `;
   }
 
+  function reorderItemsHTML(q) {
+    const order = state.answers[q.id] || [];
+    return order
+      .map((optionId, idx) => {
+        const opt = q.question_options.find((o) => o.id === optionId);
+        if (!opt) return "";
+        return `
+        <div class="reorder-item" data-option-id="${opt.id}">
+          <span class="reorder-index">${idx + 1}</span>
+          <span class="reorder-text">${escapeHtml(opt.text)}</span>
+          <div class="reorder-controls">
+            <button type="button" data-move="up" data-qid="${q.id}" data-option-id="${opt.id}" ${idx === 0 ? "disabled" : ""} aria-label="Sposta su">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 15l6-6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" data-move="down" data-qid="${q.id}" data-option-id="${opt.id}" ${idx === order.length - 1 ? "disabled" : ""} aria-label="Sposta giu'">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>`;
+      })
+      .join("");
+  }
+
+  function wireReorderList(q) {
+    const container = app.querySelector(`.reorder-list[data-qid="${q.id}"]`);
+    if (!container) return;
+    container.innerHTML = reorderItemsHTML(q);
+    container.querySelectorAll("[data-move]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const order = state.answers[q.id];
+        const idx = order.indexOf(btn.dataset.optionId);
+        const delta = btn.dataset.move === "up" ? -1 : 1;
+        const targetIdx = idx + delta;
+        if (targetIdx < 0 || targetIdx >= order.length) return;
+        [order[idx], order[targetIdx]] = [order[targetIdx], order[idx]];
+        wireReorderList(q);
+      });
+    });
+  }
+
   function wireQuestionEvents(list) {
+    list
+      .filter((q) => q.type === "reorder")
+      .forEach((q) => wireReorderList(q));
+
+
     app.querySelectorAll('[data-kind="open"]').forEach((el) => {
       el.addEventListener("input", () => {
         state.answers[el.dataset.qid] = el.value;
@@ -321,6 +376,15 @@ export async function renderRespond(app, code) {
         if (error) throw error;
         const rows = Array.from(a).map((optionId) => ({ answer_id: answer.id, option_id: optionId }));
         await supabase.from("answer_options").insert(rows);
+      } else if (q.type === "reorder") {
+        const { data: answer, error } = await supabase
+          .from("answers")
+          .insert({ response_id: response.id, question_id: q.id })
+          .select()
+          .single();
+        if (error) throw error;
+        const rows = a.map((optionId, idx) => ({ answer_id: answer.id, option_id: optionId, position: idx }));
+        await supabase.from("answer_options").insert(rows);
       }
     }
 
@@ -347,6 +411,15 @@ export async function renderRespond(app, code) {
         answerText = q.question_options
           .filter((o) => selected.has(o.id))
           .map((o) => o.text)
+          .join(", ");
+      } else if (q.type === "reorder") {
+        const order = Array.isArray(a) ? a : [];
+        answerText = order
+          .map((optionId, idx) => {
+            const opt = q.question_options.find((o) => o.id === optionId);
+            return opt ? `${idx + 1}. ${opt.text}` : null;
+          })
+          .filter(Boolean)
           .join(", ");
       }
 

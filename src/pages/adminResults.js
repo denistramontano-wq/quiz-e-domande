@@ -42,6 +42,14 @@ export async function renderAdminResults(app, questionnaireId) {
     if (question.type === "single_choice" || question.type === "multiple_choice") {
       return answer.answer_options.map((ao) => ao.question_options?.text).filter(Boolean).join(", ");
     }
+    if (question.type === "reorder") {
+      const ordered = [...answer.answer_options].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      return ordered
+        .map((ao) => ao.question_options?.text)
+        .filter(Boolean)
+        .map((text, idx) => `${idx + 1}. ${text}`)
+        .join(", ");
+    }
     return "";
   }
 

@@ -44,6 +44,15 @@ export async function renderAdminResponseDetail(app, questionnaireId, responseId
         photoUrl: null,
       };
     }
+    if (question.type === "reorder") {
+      const ordered = [...answer.answer_options].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      const text = ordered
+        .map((ao) => ao.question_options?.text)
+        .filter(Boolean)
+        .map((t, idx) => `${idx + 1}. ${t}`)
+        .join("\n");
+      return { text, photoUrl: null };
+    }
     return { text: "", photoUrl: null };
   }
 

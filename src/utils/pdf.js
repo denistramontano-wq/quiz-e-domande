@@ -215,8 +215,9 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12.5);
+    const reorderHint = q.type === "reorder" ? "  (scrivi l'ordine nelle caselle)" : "";
     const qLines = doc.splitTextToSize(
-      `${i + 1}. ${q.text}${q.required ? "" : "  (facoltativa)"}`,
+      `${i + 1}. ${q.text}${q.required ? "" : "  (facoltativa)"}${reorderHint}`,
       contentWidth - PADDING * 2
     );
     const qBlockHeight = qLines.length * LINE_HEIGHT;
@@ -228,7 +229,7 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
     } else if (q.type === "true_false") {
       optionRows = [{ label: "Vero" }, { label: "Falso" }];
       answerAreaHeight = optionRows.length * 22;
-    } else if (q.type === "single_choice" || q.type === "multiple_choice") {
+    } else if (q.type === "single_choice" || q.type === "multiple_choice" || q.type === "reorder") {
       optionRows = (q.question_options || []).map((o) => ({ label: o.text, note: o.note }));
       answerAreaHeight = optionRows.reduce((sum, o) => sum + 22 + (o.note ? 12 : 0), 0);
     } else if (q.type === "photo") {
@@ -268,12 +269,15 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
       doc.text("Spazio per allegare la foto", MARGIN + PADDING + 10, cursorY + 27);
     } else {
       const isSingle = q.type === "single_choice";
+      const isReorder = q.type === "reorder";
       optionRows.forEach((o) => {
         const boxX = MARGIN + PADDING;
         const boxY = cursorY - 9;
         doc.setDrawColor(...MUTED);
         doc.setLineWidth(1);
-        if (isSingle) {
+        if (isReorder) {
+          doc.rect(boxX, boxY, 20, 14, "S");
+        } else if (isSingle) {
           doc.circle(boxX + 5, boxY + 5, 5, "S");
         } else {
           doc.rect(boxX, boxY, 10, 10, "S");
@@ -281,7 +285,7 @@ export async function downloadBlankQuestionnairePdf({ title, description, questi
         doc.setFont("helvetica", "normal");
         doc.setFontSize(11);
         doc.setTextColor(...TEXT);
-        doc.text(o.label, boxX + 18, cursorY);
+        doc.text(o.label, boxX + (isReorder ? 30 : 18), cursorY);
         cursorY += 22;
         if (o.note) {
           doc.setFont("helvetica", "italic");

@@ -10,7 +10,10 @@ const TYPE_LABELS = {
   multiple_choice: "Risposte multiple",
   true_false: "Vero / Falso",
   photo: "Carica foto",
+  reorder: "Riordina risposte",
 };
+
+const OPTIONS_TYPES = ["single_choice", "multiple_choice", "reorder"];
 
 function blankForm() {
   return {
@@ -252,12 +255,13 @@ export async function renderAdminEditor(app, questionnaireId) {
 
   function renderOptionsSection() {
     const section = document.getElementById("optionsSection");
-    if (!["single_choice", "multiple_choice"].includes(form.type)) {
+    if (!OPTIONS_TYPES.includes(form.type)) {
       section.innerHTML = "";
       return;
     }
     section.innerHTML = `
-      <label>Opzioni di risposta</label>
+      <label>${form.type === "reorder" ? "Elementi da riordinare (in ordine corretto)" : "Opzioni di risposta"}</label>
+      ${form.type === "reorder" ? '<p class="hint">L\'utente ricevera\' questi elementi in ordine casuale e dovra\' riordinarli. L\'ordine qui sotto e\' quello di riferimento.</p>' : ""}
       <div id="optionsList">
         ${form.options
           .map(
@@ -351,10 +355,13 @@ export async function renderAdminEditor(app, questionnaireId) {
     }
 
     let cleanOptions = [];
-    if (["single_choice", "multiple_choice"].includes(form.type)) {
+    if (OPTIONS_TYPES.includes(form.type)) {
       cleanOptions = form.options.map((o) => ({ text: o.text.trim(), note: o.note.trim() })).filter((o) => o.text);
       if (cleanOptions.length < 2) {
-        formErr.textContent = "Aggiungi almeno due opzioni di risposta.";
+        formErr.textContent =
+          form.type === "reorder"
+            ? "Aggiungi almeno due elementi da riordinare."
+            : "Aggiungi almeno due opzioni di risposta.";
         formErr.style.display = "block";
         return;
       }
