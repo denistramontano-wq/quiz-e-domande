@@ -442,6 +442,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           <button class="btn small secondary" data-action="up" ${i === 0 ? "disabled" : ""}>&uarr; Su</button>
           <button class="btn small secondary" data-action="down" ${i === total - 1 ? "disabled" : ""}>&darr; Giu'</button>
           <button class="btn small secondary" data-action="edit">Modifica</button>
+          <button class="btn small secondary" data-action="duplicate">Duplica</button>
           <button class="btn small danger" data-action="delete">Elimina</button>
         </div>
       </div>
@@ -476,6 +477,18 @@ export async function renderAdminEditor(app, questionnaireId) {
         await load();
       });
 
+      row.querySelector('[data-action="duplicate"]').addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await duplicateQuestion(q, questions);
+        } catch (err) {
+          console.error(err);
+          alert("Errore durante la duplicazione della domanda.");
+          btn.disabled = false;
+        }
+      });
+
       const upBtn = row.querySelector('[data-action="up"]');
       const downBtn = row.querySelector('[data-action="down"]');
       if (upBtn && !upBtn.disabled) {
@@ -485,6 +498,35 @@ export async function renderAdminEditor(app, questionnaireId) {
         downBtn.addEventListener("click", () => swapOrder(questions, i, i + 1));
       }
     });
+  }
+
+  async function duplicateQuestion(q, questions) {
+    const maxOrder = questions.reduce((m, qq) => Math.max(m, qq.order_index), -1);
+    const { data: created, error } = await supabase
+      .from("questions")
+      .insert({
+        questionnaire_id: questionnaireId,
+        type: q.type,
+        text: `${q.text} (copia)`,
+        image_url: q.image_url,
+        required: q.required,
+        order_index: maxOrder + 1,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    if (q.question_options && q.question_options.length > 0) {
+      const rows = q.question_options.map((o) => ({
+        question_id: created.id,
+        text: o.text,
+        note: o.note || null,
+        order_index: o.order_index,
+      }));
+      await supabase.from("question_options").insert(rows);
+    }
+
+    await load();
   }
 
   async function swapOrder(questions, i, j) {
