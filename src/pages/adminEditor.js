@@ -65,6 +65,7 @@ export async function renderAdminEditor(app, questionnaireId) {
 
   function render(questions) {
     const shareUrl = `${window.location.origin}${window.location.pathname}#/q/${questionnaire.share_code}`;
+    const trainingUrl = `${window.location.origin}${window.location.pathname}#/allena/${questionnaire.share_code}`;
 
     const main = app.querySelector("main");
     main.innerHTML = `
@@ -95,6 +96,16 @@ export async function renderAdminEditor(app, questionnaireId) {
           <button class="btn secondary" id="printBlankBtn">Questionario vuoto (PDF)</button>
           <button class="btn secondary" id="printAnswerKeyBtn">Chiave delle risposte (PDF)</button>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Modalita' allenamento</h2>
+        <p class="hint" style="margin-top:0;">Un quiz con domande in ordine casuale e riscontro immediato di corretto/errato, pensato per esercitarsi. Non salva nessun risultato. Attivandola, chi ha il link dell'allenamento vede le risposte corrette: usala solo per questionari che non servono piu' come verifica riservata.</p>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <input type="checkbox" id="trainingEnabled" ${questionnaire.training_enabled ? "checked" : ""} style="width:auto;" />
+          Abilita la modalita' allenamento per questo questionario
+        </label>
+        <div id="trainingLinkArea"></div>
       </div>
 
       <div class="card">
@@ -178,6 +189,52 @@ export async function renderAdminEditor(app, questionnaireId) {
         .update({ random_subset_enabled: e.target.checked })
         .eq("id", questionnaire.id);
     });
+
+    renderTrainingLinkArea();
+    main.querySelector("#trainingEnabled").addEventListener("change", async (e) => {
+      questionnaire.training_enabled = e.target.checked;
+      await supabase
+        .from("questionnaires")
+        .update({ training_enabled: e.target.checked })
+        .eq("id", questionnaire.id);
+      renderTrainingLinkArea();
+    });
+
+    function renderTrainingLinkArea() {
+      const area = main.querySelector("#trainingLinkArea");
+      if (!questionnaire.training_enabled) {
+        area.innerHTML = "";
+        return;
+      }
+      area.innerHTML = `
+        <p class="hint" style="margin-top:14px;">Link per allenarsi (mostra le risposte corrette, non salva nulla):</p>
+        <div class="share-box" id="trainingUrlBox">${trainingUrl}</div>
+        <button class="btn secondary small" id="copyTrainingBtn" style="margin-top:10px;">Copia link</button>
+        <div class="center" style="margin-top:18px;">
+          <img id="trainingQrImg" alt="QR code allenamento" style="width:180px;height:180px;border-radius:16px;border:1px solid var(--border);" />
+          <div>
+            <a class="btn secondary small" id="downloadTrainingQr" style="margin-top:10px;" download="qr-allenamento-${questionnaire.share_code}.png">Scarica QR code</a>
+          </div>
+        </div>
+      `;
+      area.querySelector("#copyTrainingBtn").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(trainingUrl);
+          area.querySelector("#copyTrainingBtn").textContent = "Copiato!";
+          setTimeout(() => (area.querySelector("#copyTrainingBtn").textContent = "Copia link"), 1500);
+        } catch {
+          /* clipboard non disponibile, l'utente puo' copiare manualmente */
+        }
+      });
+      QRCode.toDataURL(trainingUrl, {
+        width: 360,
+        margin: 1,
+        color: { dark: "#1f1b2e", light: "#ffffff" },
+      }).then((dataUrl) => {
+        area.querySelector("#trainingQrImg").src = dataUrl;
+        area.querySelector("#downloadTrainingQr").href = dataUrl;
+      });
+    }
 
     main.querySelector("#printBlankBtn").addEventListener("click", async (e) => {
       const btn = e.currentTarget;

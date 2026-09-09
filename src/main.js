@@ -2,6 +2,7 @@ import "./styles.css";
 import { supabase } from "./supabaseClient.js";
 import { renderHome } from "./pages/home.js";
 import { renderRespond } from "./pages/respond.js";
+import { renderTraining } from "./pages/training.js";
 import { renderAdminLogin } from "./pages/adminLogin.js";
 import { renderAdminDashboard } from "./pages/adminDashboard.js";
 import { renderAdminEditor } from "./pages/adminEditor.js";
@@ -20,6 +21,10 @@ async function router() {
 
   if (parts[0] === "q" && parts[1]) {
     return renderRespond(app, parts[1]);
+  }
+
+  if (parts[0] === "allena" && parts[1]) {
+    return renderTraining(app, parts[1]);
   }
 
   if (parts[0] === "admin") {
