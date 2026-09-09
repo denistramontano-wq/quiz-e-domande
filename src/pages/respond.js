@@ -325,15 +325,17 @@ export async function renderRespond(app, code) {
   }
 
   async function submitResponses(list) {
-    const { data: response, error: respErr } = await supabase
-      .from("responses")
-      .insert({
-        questionnaire_id: questionnaire.id,
-        respondent_name: state.name,
-        matricola: state.matricola,
-      })
-      .select()
-      .single();
+    // Chi compila (ruolo anon) puo' solo inserire, non rileggere le righe:
+    // niente .select() dopo l'insert, gli id vengono generati lato client.
+    const responseId = crypto.randomUUID();
+    const submittedAt = new Date().toISOString();
+    const { error: respErr } = await supabase.from("responses").insert({
+      id: responseId,
+      questionnaire_id: questionnaire.id,
+      respondent_name: state.name,
+      matricola: state.matricola,
+      submitted_at: submittedAt,
+    });
     if (respErr) throw respErr;
 
     for (const q of list) {
@@ -341,54 +343,57 @@ export async function renderRespond(app, code) {
       if (a === undefined || a === null || a === "") continue;
 
       if (q.type === "open") {
-        await supabase.from("answers").insert({
-          response_id: response.id,
+        const { error } = await supabase.from("answers").insert({
+          response_id: responseId,
           question_id: q.id,
           answer_text: a,
         });
+        if (error) throw error;
       } else if (q.type === "true_false") {
-        await supabase.from("answers").insert({
-          response_id: response.id,
+        const { error } = await supabase.from("answers").insert({
+          response_id: responseId,
           question_id: q.id,
           answer_text: a ? "Vero" : "Falso",
         });
+        if (error) throw error;
       } else if (q.type === "photo") {
-        await supabase.from("answers").insert({
-          response_id: response.id,
+        const { error } = await supabase.from("answers").insert({
+          response_id: responseId,
           question_id: q.id,
           photo_url: a,
         });
-      } else if (q.type === "single_choice") {
-        const { data: answer, error } = await supabase
-          .from("answers")
-          .insert({ response_id: response.id, question_id: q.id })
-          .select()
-          .single();
         if (error) throw error;
-        await supabase.from("answer_options").insert({ answer_id: answer.id, option_id: a });
+      } else if (q.type === "single_choice") {
+        const answerId = crypto.randomUUID();
+        const { error } = await supabase
+          .from("answers")
+          .insert({ id: answerId, response_id: responseId, question_id: q.id });
+        if (error) throw error;
+        const { error: optErr } = await supabase.from("answer_options").insert({ answer_id: answerId, option_id: a });
+        if (optErr) throw optErr;
       } else if (q.type === "multiple_choice") {
         if (a.size === 0) continue;
-        const { data: answer, error } = await supabase
+        const answerId = crypto.randomUUID();
+        const { error } = await supabase
           .from("answers")
-          .insert({ response_id: response.id, question_id: q.id })
-          .select()
-          .single();
+          .insert({ id: answerId, response_id: responseId, question_id: q.id });
         if (error) throw error;
-        const rows = Array.from(a).map((optionId) => ({ answer_id: answer.id, option_id: optionId }));
-        await supabase.from("answer_options").insert(rows);
+        const rows = Array.from(a).map((optionId) => ({ answer_id: answerId, option_id: optionId }));
+        const { error: optErr } = await supabase.from("answer_options").insert(rows);
+        if (optErr) throw optErr;
       } else if (q.type === "reorder") {
-        const { data: answer, error } = await supabase
+        const answerId = crypto.randomUUID();
+        const { error } = await supabase
           .from("answers")
-          .insert({ response_id: response.id, question_id: q.id })
-          .select()
-          .single();
+          .insert({ id: answerId, response_id: responseId, question_id: q.id });
         if (error) throw error;
-        const rows = a.map((optionId, idx) => ({ answer_id: answer.id, option_id: optionId, position: idx }));
-        await supabase.from("answer_options").insert(rows);
+        const rows = a.map((optionId, idx) => ({ answer_id: answerId, option_id: optionId, position: idx }));
+        const { error: optErr } = await supabase.from("answer_options").insert(rows);
+        if (optErr) throw optErr;
       }
     }
 
-    return response.submitted_at;
+    return submittedAt;
   }
 
   function buildPdfItems(list) {
