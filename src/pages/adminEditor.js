@@ -1,3 +1,4 @@
+import QRCode from "qrcode";
 import { supabase } from "../supabaseClient.js";
 import { topbarHTML } from "../components/topbar.js";
 import { escapeHtml } from "../utils/html.js";
@@ -9,7 +10,10 @@ const TYPE_LABELS = {
   multiple_choice: "Risposte multiple",
   true_false: "Vero / Falso",
   photo: "Carica foto",
+  reorder: "Riordina risposte",
 };
+
+const OPTIONS_TYPES = ["single_choice", "multiple_choice", "reorder"];
 
 function blankForm() {
   return {
@@ -18,9 +22,12 @@ function blankForm() {
     text: "",
     required: true,
     imageUrl: null,
+    correctBoolean: null,
+    correctAnswerText: "",
+    falseExplanation: "",
     options: [
-      { text: "", note: "" },
-      { text: "", note: "" },
+      { text: "", note: "", isCorrect: false },
+      { text: "", note: "", isCorrect: false },
     ],
   };
 }
@@ -59,14 +66,47 @@ export async function renderAdminEditor(app, questionnaireId) {
 
   function render(questions) {
     const shareUrl = `${window.location.origin}${window.location.pathname}#/q/${questionnaire.share_code}`;
+    const trainingUrl = `${window.location.origin}${window.location.pathname}#/allena/${questionnaire.share_code}`;
 
     const main = app.querySelector("main");
     main.innerHTML = `
       <div class="card">
-        <h2>${escapeHtml(questionnaire.title)}</h2>
+        <div id="titleView"></div>
         <p class="hint">Condividi questo link con chi deve compilare il questionario:</p>
         <div class="share-box" id="shareUrl">${shareUrl}</div>
         <button class="btn secondary small" id="copyBtn" style="margin-top:10px;">Copia link</button>
+
+        <div class="center" style="margin-top:18px;">
+          <img id="qrImg" alt="QR code del questionario" style="width:180px;height:180px;border-radius:16px;border:1px solid var(--border);" />
+          <div>
+            <a class="btn secondary small" id="downloadQr" style="margin-top:10px;" download="qr-${questionnaire.share_code}.png">Scarica QR code</a>
+          </div>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:18px;">
+          <input type="checkbox" id="randomize" ${questionnaire.randomize_questions ? "checked" : ""} style="width:auto;" />
+          Mostra le domande in ordine casuale a ogni utente
+        </label>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <input type="checkbox" id="subsetEnabled" ${questionnaire.random_subset_enabled ? "checked" : ""} style="width:auto;" />
+          Estrai solo 10 domande casuali per ogni utente (se il questionario ne ha di piu')
+        </label>
+
+        <div class="btn-row">
+          <button class="btn secondary" id="printBlankBtn">Questionario vuoto (PDF)</button>
+          <button class="btn secondary" id="printAnswerKeyBtn">Chiave delle risposte (PDF)</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Modalita' allenamento</h2>
+        <p class="hint" style="margin-top:0;">Un quiz con domande in ordine casuale e riscontro immediato di corretto/errato, pensato per esercitarsi. Non salva nessun risultato. Attivandola, chi ha il link dell'allenamento vede le risposte corrette: usala solo per questionari che non servono piu' come verifica riservata.</p>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <input type="checkbox" id="trainingEnabled" ${questionnaire.training_enabled ? "checked" : ""} style="width:auto;" />
+          Abilita la modalita' allenamento per questo questionario
+        </label>
+        <div id="trainingLinkArea"></div>
       </div>
 
       <div class="card">
@@ -94,6 +134,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           Risposta obbligatoria
         </label>
 
+        <div id="correctAnswerSection"></div>
         <div id="optionsSection"></div>
 
         <div id="formErr" class="error" style="display:none"></div>
@@ -113,6 +154,8 @@ export async function renderAdminEditor(app, questionnaireId) {
       </div>
     `;
 
+    renderTitleView();
+
     main.querySelector("#copyBtn").addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(shareUrl);
@@ -123,19 +166,247 @@ export async function renderAdminEditor(app, questionnaireId) {
       }
     });
 
+    QRCode.toDataURL(shareUrl, {
+      width: 360,
+      margin: 1,
+      color: { dark: "#1f1b2e", light: "#ffffff" },
+    }).then((dataUrl) => {
+      main.querySelector("#qrImg").src = dataUrl;
+      main.querySelector("#downloadQr").href = dataUrl;
+    });
+
+    main.querySelector("#randomize").addEventListener("change", async (e) => {
+      questionnaire.randomize_questions = e.target.checked;
+      await supabase
+        .from("questionnaires")
+        .update({ randomize_questions: e.target.checked })
+        .eq("id", questionnaire.id);
+    });
+
+    main.querySelector("#subsetEnabled").addEventListener("change", async (e) => {
+      questionnaire.random_subset_enabled = e.target.checked;
+      await supabase
+        .from("questionnaires")
+        .update({ random_subset_enabled: e.target.checked })
+        .eq("id", questionnaire.id);
+    });
+
+    renderTrainingLinkArea();
+    main.querySelector("#trainingEnabled").addEventListener("change", async (e) => {
+      questionnaire.training_enabled = e.target.checked;
+      await supabase
+        .from("questionnaires")
+        .update({ training_enabled: e.target.checked })
+        .eq("id", questionnaire.id);
+      renderTrainingLinkArea();
+    });
+
+    function renderTrainingLinkArea() {
+      const area = main.querySelector("#trainingLinkArea");
+      if (!questionnaire.training_enabled) {
+        area.innerHTML = "";
+        return;
+      }
+      area.innerHTML = `
+        <p class="hint" style="margin-top:14px;">Link per allenarsi (mostra le risposte corrette, non salva nulla):</p>
+        <div class="share-box" id="trainingUrlBox">${trainingUrl}</div>
+        <button class="btn secondary small" id="copyTrainingBtn" style="margin-top:10px;">Copia link</button>
+        <div class="center" style="margin-top:18px;">
+          <img id="trainingQrImg" alt="QR code allenamento" style="width:180px;height:180px;border-radius:16px;border:1px solid var(--border);" />
+          <div>
+            <a class="btn secondary small" id="downloadTrainingQr" style="margin-top:10px;" download="qr-allenamento-${questionnaire.share_code}.png">Scarica QR code</a>
+          </div>
+        </div>
+      `;
+      area.querySelector("#copyTrainingBtn").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(trainingUrl);
+          area.querySelector("#copyTrainingBtn").textContent = "Copiato!";
+          setTimeout(() => (area.querySelector("#copyTrainingBtn").textContent = "Copia link"), 1500);
+        } catch {
+          /* clipboard non disponibile, l'utente puo' copiare manualmente */
+        }
+      });
+      QRCode.toDataURL(trainingUrl, {
+        width: 360,
+        margin: 1,
+        color: { dark: "#1f1b2e", light: "#ffffff" },
+      }).then((dataUrl) => {
+        area.querySelector("#trainingQrImg").src = dataUrl;
+        area.querySelector("#downloadTrainingQr").href = dataUrl;
+      });
+    }
+
+    main.querySelector("#printBlankBtn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Genero il PDF...";
+      try {
+        const { downloadBlankQuestionnairePdf } = await import("../utils/pdf.js");
+        await downloadBlankQuestionnairePdf({
+          title: questionnaire.title,
+          description: questionnaire.description,
+          questions,
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Errore nella generazione del PDF.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+
+    main.querySelector("#printAnswerKeyBtn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Genero il PDF...";
+      try {
+        const { downloadAnswerKeyPdf } = await import("../utils/pdf.js");
+        await downloadAnswerKeyPdf({
+          title: questionnaire.title,
+          description: questionnaire.description,
+          questions,
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Errore nella generazione del PDF.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+
+    renderCorrectAnswerSection();
     renderOptionsSection();
     wireForm(questions);
     wireQuestionList(questions);
   }
 
+  function renderTitleView() {
+    const main = app.querySelector("main");
+    const container = main.querySelector("#titleView");
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <h2 style="margin:0;">${escapeHtml(questionnaire.title)}</h2>
+        <button class="btn small secondary" id="editTitleBtn">Rinomina</button>
+      </div>
+    `;
+    main.querySelector("#editTitleBtn").addEventListener("click", renderTitleEdit);
+  }
+
+  function renderTitleEdit() {
+    const main = app.querySelector("main");
+    const container = main.querySelector("#titleView");
+    container.innerHTML = `
+      <label for="titleInput">Titolo del questionario</label>
+      <input type="text" id="titleInput" value="${escapeHtml(questionnaire.title)}" />
+      <div id="titleErr" class="error" style="display:none"></div>
+      <div class="btn-row">
+        <button class="btn small secondary" id="cancelTitle">Annulla</button>
+        <button class="btn small" id="saveTitle">Salva</button>
+      </div>
+    `;
+    const input = container.querySelector("#titleInput");
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+
+    container.querySelector("#cancelTitle").addEventListener("click", renderTitleView);
+    container.querySelector("#saveTitle").addEventListener("click", async () => {
+      const newTitle = input.value.trim();
+      const err = container.querySelector("#titleErr");
+      if (!newTitle) {
+        err.textContent = "Il titolo non puo' essere vuoto.";
+        err.style.display = "block";
+        return;
+      }
+      const { error } = await supabase
+        .from("questionnaires")
+        .update({ title: newTitle })
+        .eq("id", questionnaire.id);
+      if (error) {
+        err.textContent = "Errore durante il salvataggio.";
+        err.style.display = "block";
+        return;
+      }
+      questionnaire.title = newTitle;
+      renderTitleView();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") container.querySelector("#saveTitle").click();
+    });
+  }
+
+  function renderCorrectAnswerSection() {
+    const section = document.getElementById("correctAnswerSection");
+    if (form.type === "open") {
+      section.innerHTML = `
+        <label for="correctText">Risposta di riferimento (facoltativa)</label>
+        <textarea id="correctText" placeholder="Risposta corretta o traccia di correzione: la vedi solo tu, mai chi compila.">${escapeHtml(form.correctAnswerText)}</textarea>
+      `;
+      section.querySelector("#correctText").addEventListener("input", (e) => {
+        form.correctAnswerText = e.target.value;
+      });
+    } else if (form.type === "true_false") {
+      section.innerHTML = `
+        <label>Risposta corretta (facoltativa)</label>
+        <div class="true-false-row" id="correctBoolPicker">
+          <button type="button" data-value="true" class="${form.correctBoolean === true ? "selected" : ""}">Vero</button>
+          <button type="button" data-value="false" class="${form.correctBoolean === false ? "selected" : ""}">Falso</button>
+        </div>
+        ${
+          form.correctBoolean !== null
+            ? '<button type="button" class="btn secondary small" id="clearCorrectBool" style="margin-top:8px;">Rimuovi risposta corretta</button>'
+            : ""
+        }
+        ${
+          form.correctBoolean === false
+            ? `<label for="falseExplanation">Perche' e' falsa (facoltativo, la vedi solo tu)</label>
+               <textarea id="falseExplanation" placeholder="Spiegazione visibile solo all'amministratore...">${escapeHtml(form.falseExplanation)}</textarea>`
+            : ""
+        }
+      `;
+      section.querySelectorAll("#correctBoolPicker button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          form.correctBoolean = btn.dataset.value === "true";
+          renderCorrectAnswerSection();
+        });
+      });
+      const clearBtn = section.querySelector("#clearCorrectBool");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+          form.correctBoolean = null;
+          renderCorrectAnswerSection();
+        });
+      }
+      const explanationInput = section.querySelector("#falseExplanation");
+      if (explanationInput) {
+        explanationInput.addEventListener("input", (e) => {
+          form.falseExplanation = e.target.value;
+        });
+      }
+    } else {
+      section.innerHTML = "";
+    }
+  }
+
   function renderOptionsSection() {
     const section = document.getElementById("optionsSection");
-    if (!["single_choice", "multiple_choice"].includes(form.type)) {
+    if (!OPTIONS_TYPES.includes(form.type)) {
       section.innerHTML = "";
       return;
     }
+    const showCorrectMarking = form.type === "single_choice" || form.type === "multiple_choice";
     section.innerHTML = `
-      <label>Opzioni di risposta</label>
+      <label>${form.type === "reorder" ? "Elementi da riordinare (in ordine corretto)" : "Opzioni di risposta"}</label>
+      ${form.type === "reorder" ? '<p class="hint">L\'utente ricevera\' questi elementi in ordine casuale e dovra\' riordinarli. L\'ordine qui sotto e\' quello di riferimento.</p>' : ""}
+      ${
+        showCorrectMarking
+          ? `<p class="hint">Seleziona ${form.type === "single_choice" ? "l'opzione corretta" : "le opzioni corrette"} (facoltativo, visibile solo a te).</p>`
+          : ""
+      }
       <div id="optionsList">
         ${form.options
           .map(
@@ -143,6 +414,14 @@ export async function renderAdminEditor(app, questionnaireId) {
           <div class="card" style="padding:10px;margin-bottom:8px;" data-opt-idx="${idx}">
             <input type="text" placeholder="Testo opzione" class="opt-text" value="${escapeHtml(o.text)}" />
             <input type="text" placeholder="Nota (facoltativa)" class="opt-note" value="${escapeHtml(o.note)}" style="margin-top:8px;" />
+            ${
+              showCorrectMarking
+                ? `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                    <input type="${form.type === "single_choice" ? "radio" : "checkbox"}" name="optCorrect" class="opt-correct" style="width:auto;" ${o.isCorrect ? "checked" : ""} />
+                    Risposta corretta
+                  </label>`
+                : ""
+            }
             <button type="button" class="icon-btn danger" data-remove-opt="${idx}" style="margin-top:4px;">Rimuovi opzione</button>
           </div>`
           )
@@ -157,6 +436,14 @@ export async function renderAdminEditor(app, questionnaireId) {
     section.querySelectorAll(".opt-note").forEach((el, idx) => {
       el.addEventListener("input", () => (form.options[idx].note = el.value));
     });
+    section.querySelectorAll(".opt-correct").forEach((el, idx) => {
+      el.addEventListener("change", () => {
+        if (form.type === "single_choice") {
+          form.options.forEach((o) => (o.isCorrect = false));
+        }
+        form.options[idx].isCorrect = el.checked;
+      });
+    });
     section.querySelectorAll("[data-remove-opt]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const idx = Number(btn.dataset.removeOpt);
@@ -165,7 +452,7 @@ export async function renderAdminEditor(app, questionnaireId) {
       });
     });
     section.querySelector("#addOptBtn").addEventListener("click", () => {
-      form.options.push({ text: "", note: "" });
+      form.options.push({ text: "", note: "", isCorrect: false });
       renderOptionsSection();
     });
   }
@@ -229,10 +516,15 @@ export async function renderAdminEditor(app, questionnaireId) {
     }
 
     let cleanOptions = [];
-    if (["single_choice", "multiple_choice"].includes(form.type)) {
-      cleanOptions = form.options.map((o) => ({ text: o.text.trim(), note: o.note.trim() })).filter((o) => o.text);
+    if (OPTIONS_TYPES.includes(form.type)) {
+      cleanOptions = form.options
+        .map((o) => ({ text: o.text.trim(), note: o.note.trim(), isCorrect: !!o.isCorrect }))
+        .filter((o) => o.text);
       if (cleanOptions.length < 2) {
-        formErr.textContent = "Aggiungi almeno due opzioni di risposta.";
+        formErr.textContent =
+          form.type === "reorder"
+            ? "Aggiungi almeno due elementi da riordinare."
+            : "Aggiungi almeno due opzioni di risposta.";
         formErr.style.display = "block";
         return;
       }
@@ -251,6 +543,12 @@ export async function renderAdminEditor(app, questionnaireId) {
             text,
             image_url: form.imageUrl,
             required: form.required,
+            correct_boolean: form.type === "true_false" ? form.correctBoolean : null,
+            correct_answer_text: form.type === "open" ? form.correctAnswerText.trim() || null : null,
+            false_explanation:
+              form.type === "true_false" && form.correctBoolean === false
+                ? form.falseExplanation.trim() || null
+                : null,
           })
           .eq("id", questionId);
         await supabase.from("question_options").delete().eq("question_id", questionId);
@@ -264,6 +562,12 @@ export async function renderAdminEditor(app, questionnaireId) {
             text,
             image_url: form.imageUrl,
             required: form.required,
+            correct_boolean: form.type === "true_false" ? form.correctBoolean : null,
+            correct_answer_text: form.type === "open" ? form.correctAnswerText.trim() || null : null,
+            false_explanation:
+              form.type === "true_false" && form.correctBoolean === false
+                ? form.falseExplanation.trim() || null
+                : null,
             order_index: maxOrder + 1,
           })
           .select()
@@ -278,6 +582,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           text: o.text,
           note: o.note || null,
           order_index: idx,
+          is_correct: o.isCorrect,
         }));
         await supabase.from("question_options").insert(rows);
       }
@@ -296,10 +601,24 @@ export async function renderAdminEditor(app, questionnaireId) {
     const optionsPreview =
       q.question_options && q.question_options.length > 0
         ? `<ul style="margin:8px 0 0;padding-left:18px;">${q.question_options
-            .map((o) => `<li>${escapeHtml(o.text)}${o.note ? ` <span class="hint">(${escapeHtml(o.note)})</span>` : ""}</li>`)
+            .map(
+              (o) =>
+                `<li>${escapeHtml(o.text)}${o.is_correct ? ' <strong style="color:var(--success);">(corretta)</strong>' : ""}${o.note ? ` <span class="hint">(${escapeHtml(o.note)})</span>` : ""}</li>`
+            )
             .join("")}</ul>`
         : "";
     const img = q.image_url ? `<img src="${q.image_url}" class="question-image" style="max-height:120px;" />` : "";
+    const correctInfo =
+      q.type === "true_false" && (q.correct_boolean === true || q.correct_boolean === false)
+        ? `<p class="hint" style="color:var(--success);margin-top:6px;">Risposta corretta: ${q.correct_boolean ? "Vero" : "Falso"}</p>
+           ${
+             q.correct_boolean === false && q.false_explanation
+               ? `<p class="hint" style="margin-top:2px;">Perche' e' falsa: ${escapeHtml(q.false_explanation)}</p>`
+               : ""
+           }`
+        : q.type === "open" && q.correct_answer_text
+          ? `<p class="hint" style="margin-top:6px;">Risposta di riferimento: ${escapeHtml(q.correct_answer_text)}</p>`
+          : "";
 
     return `
       <div class="list-item" style="flex-direction:column;align-items:stretch;" data-question="${q.id}">
@@ -308,11 +627,13 @@ export async function renderAdminEditor(app, questionnaireId) {
           <strong style="margin-top:6px;">${i + 1}. ${escapeHtml(q.text)}</strong>
           ${img}
           ${optionsPreview}
+          ${correctInfo}
         </div>
         <div class="btn-row" style="margin-top:10px;flex-wrap:wrap;">
           <button class="btn small secondary" data-action="up" ${i === 0 ? "disabled" : ""}>&uarr; Su</button>
           <button class="btn small secondary" data-action="down" ${i === total - 1 ? "disabled" : ""}>&darr; Giu'</button>
           <button class="btn small secondary" data-action="edit">Modifica</button>
+          <button class="btn small secondary" data-action="duplicate">Duplica</button>
           <button class="btn small danger" data-action="delete">Elimina</button>
         </div>
       </div>
@@ -329,12 +650,15 @@ export async function renderAdminEditor(app, questionnaireId) {
           text: q.text,
           required: q.required,
           imageUrl: q.image_url,
+          correctBoolean: q.correct_boolean === true || q.correct_boolean === false ? q.correct_boolean : null,
+          correctAnswerText: q.correct_answer_text || "",
+          falseExplanation: q.false_explanation || "",
           options:
             q.question_options.length > 0
-              ? q.question_options.map((o) => ({ text: o.text, note: o.note || "" }))
+              ? q.question_options.map((o) => ({ text: o.text, note: o.note || "", isCorrect: !!o.is_correct }))
               : [
-                  { text: "", note: "" },
-                  { text: "", note: "" },
+                  { text: "", note: "", isCorrect: false },
+                  { text: "", note: "", isCorrect: false },
                 ],
         };
         render(questions);
@@ -347,6 +671,18 @@ export async function renderAdminEditor(app, questionnaireId) {
         await load();
       });
 
+      row.querySelector('[data-action="duplicate"]').addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await duplicateQuestion(q, questions);
+        } catch (err) {
+          console.error(err);
+          alert("Errore durante la duplicazione della domanda.");
+          btn.disabled = false;
+        }
+      });
+
       const upBtn = row.querySelector('[data-action="up"]');
       const downBtn = row.querySelector('[data-action="down"]');
       if (upBtn && !upBtn.disabled) {
@@ -356,6 +692,39 @@ export async function renderAdminEditor(app, questionnaireId) {
         downBtn.addEventListener("click", () => swapOrder(questions, i, i + 1));
       }
     });
+  }
+
+  async function duplicateQuestion(q, questions) {
+    const maxOrder = questions.reduce((m, qq) => Math.max(m, qq.order_index), -1);
+    const { data: created, error } = await supabase
+      .from("questions")
+      .insert({
+        questionnaire_id: questionnaireId,
+        type: q.type,
+        text: `${q.text} (copia)`,
+        image_url: q.image_url,
+        required: q.required,
+        correct_boolean: q.correct_boolean === true || q.correct_boolean === false ? q.correct_boolean : null,
+        correct_answer_text: q.correct_answer_text || null,
+        false_explanation: q.correct_boolean === false ? q.false_explanation || null : null,
+        order_index: maxOrder + 1,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    if (q.question_options && q.question_options.length > 0) {
+      const rows = q.question_options.map((o) => ({
+        question_id: created.id,
+        text: o.text,
+        note: o.note || null,
+        order_index: o.order_index,
+        is_correct: !!o.is_correct,
+      }));
+      await supabase.from("question_options").insert(rows);
+    }
+
+    await load();
   }
 
   async function swapOrder(questions, i, j) {

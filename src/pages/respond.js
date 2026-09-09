@@ -2,6 +2,7 @@ import { supabase } from "../supabaseClient.js";
 import { topbarHTML } from "../components/topbar.js";
 import { uploadPhoto } from "../utils/uploadPhoto.js";
 import { escapeHtml } from "../utils/html.js";
+import { shuffle } from "../utils/shuffle.js";
 
 export async function renderRespond(app, code) {
   app.innerHTML = `${topbarHTML("Quiz e Domande")}<main class="container"><div class="spinner">Caricamento...</div></main>`;
@@ -23,15 +24,23 @@ export async function renderRespond(app, code) {
     return;
   }
 
-  const { data: questions } = await supabase
-    .from("questions")
-    .select("*, question_options(*)")
+  let { data: questions } = await supabase
+    .from("public_questions")
+    .select("*")
     .eq("questionnaire_id", questionnaire.id)
     .order("order_index", { ascending: true });
 
-  (questions || []).forEach((q) => {
+  questions = questions || [];
+  questions.forEach((q) => {
     q.question_options.sort((a, b) => a.order_index - b.order_index);
   });
+
+  const SUBSET_SIZE = 10;
+  if (questionnaire.random_subset_enabled) {
+    questions = shuffle(questions).slice(0, Math.min(SUBSET_SIZE, questions.length));
+  } else if (questionnaire.randomize_questions) {
+    questions = shuffle(questions);
+  }
 
   const state = {
     step: "gate",
@@ -91,6 +100,13 @@ export async function renderRespond(app, code) {
 
   function renderForm() {
     const list = questions || [];
+
+    list.forEach((q) => {
+      if (q.type === "reorder" && !state.answers[q.id]) {
+        state.answers[q.id] = shuffle(q.question_options.map((o) => o.id));
+      }
+    });
+
     if (list.length === 0) {
       app.innerHTML = `
         ${topbarHTML(questionnaire.title)}
@@ -132,8 +148,8 @@ export async function renderRespond(app, code) {
       submitBtn.disabled = true;
       submitBtn.textContent = "Invio in corso...";
       try {
-        await submitResponses(list);
-        renderThankYou();
+        const submittedAt = await submitResponses(list);
+        renderThankYou(list, submittedAt);
       } catch (err) {
         formErr.textContent = "Si e' verificato un errore nell'invio. Riprova.";
         formErr.style.display = "block";
@@ -151,6 +167,7 @@ export async function renderRespond(app, code) {
     if (q.type === "multiple_choice") return !!(a && a.size > 0);
     if (q.type === "true_false") return a === true || a === false;
     if (q.type === "photo") return !!a;
+    if (q.type === "reorder") return Array.isArray(a) && a.length === q.question_options.length;
     return false;
   }
 
@@ -190,6 +207,8 @@ export async function renderRespond(app, code) {
         <input type="file" accept="image/*" capture="environment" data-qid="${q.id}" data-kind="photo" />
         <div class="hint" data-status-for="${q.id}"></div>
         <img class="photo-preview" data-preview-for="${q.id}" style="display:none" />`;
+    } else if (q.type === "reorder") {
+      control = `<div class="reorder-list" data-kind="reorder" data-qid="${q.id}">${reorderItemsHTML(q)}</div>`;
     }
 
     return `
@@ -202,7 +221,52 @@ export async function renderRespond(app, code) {
     `;
   }
 
+  function reorderItemsHTML(q) {
+    const order = state.answers[q.id] || [];
+    return order
+      .map((optionId, idx) => {
+        const opt = q.question_options.find((o) => o.id === optionId);
+        if (!opt) return "";
+        return `
+        <div class="reorder-item" data-option-id="${opt.id}">
+          <span class="reorder-index">${idx + 1}</span>
+          <span class="reorder-text">${escapeHtml(opt.text)}</span>
+          <div class="reorder-controls">
+            <button type="button" data-move="up" data-qid="${q.id}" data-option-id="${opt.id}" ${idx === 0 ? "disabled" : ""} aria-label="Sposta su">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 15l6-6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" data-move="down" data-qid="${q.id}" data-option-id="${opt.id}" ${idx === order.length - 1 ? "disabled" : ""} aria-label="Sposta giu'">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>`;
+      })
+      .join("");
+  }
+
+  function wireReorderList(q) {
+    const container = app.querySelector(`.reorder-list[data-qid="${q.id}"]`);
+    if (!container) return;
+    container.innerHTML = reorderItemsHTML(q);
+    container.querySelectorAll("[data-move]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const order = state.answers[q.id];
+        const idx = order.indexOf(btn.dataset.optionId);
+        const delta = btn.dataset.move === "up" ? -1 : 1;
+        const targetIdx = idx + delta;
+        if (targetIdx < 0 || targetIdx >= order.length) return;
+        [order[idx], order[targetIdx]] = [order[targetIdx], order[idx]];
+        wireReorderList(q);
+      });
+    });
+  }
+
   function wireQuestionEvents(list) {
+    list
+      .filter((q) => q.type === "reorder")
+      .forEach((q) => wireReorderList(q));
+
+
     app.querySelectorAll('[data-kind="open"]').forEach((el) => {
       el.addEventListener("input", () => {
         state.answers[el.dataset.qid] = el.value;
@@ -261,15 +325,17 @@ export async function renderRespond(app, code) {
   }
 
   async function submitResponses(list) {
-    const { data: response, error: respErr } = await supabase
-      .from("responses")
-      .insert({
-        questionnaire_id: questionnaire.id,
-        respondent_name: state.name,
-        matricola: state.matricola,
-      })
-      .select()
-      .single();
+    // Chi compila (ruolo anon) puo' solo inserire, non rileggere le righe:
+    // niente .select() dopo l'insert, gli id vengono generati lato client.
+    const responseId = crypto.randomUUID();
+    const submittedAt = new Date().toISOString();
+    const { error: respErr } = await supabase.from("responses").insert({
+      id: responseId,
+      questionnaire_id: questionnaire.id,
+      respondent_name: state.name,
+      matricola: state.matricola,
+      submitted_at: submittedAt,
+    });
     if (respErr) throw respErr;
 
     for (const q of list) {
@@ -277,55 +343,128 @@ export async function renderRespond(app, code) {
       if (a === undefined || a === null || a === "") continue;
 
       if (q.type === "open") {
-        await supabase.from("answers").insert({
-          response_id: response.id,
+        const { error } = await supabase.from("answers").insert({
+          response_id: responseId,
           question_id: q.id,
           answer_text: a,
         });
+        if (error) throw error;
       } else if (q.type === "true_false") {
-        await supabase.from("answers").insert({
-          response_id: response.id,
+        const { error } = await supabase.from("answers").insert({
+          response_id: responseId,
           question_id: q.id,
           answer_text: a ? "Vero" : "Falso",
         });
+        if (error) throw error;
       } else if (q.type === "photo") {
-        await supabase.from("answers").insert({
-          response_id: response.id,
+        const { error } = await supabase.from("answers").insert({
+          response_id: responseId,
           question_id: q.id,
           photo_url: a,
         });
-      } else if (q.type === "single_choice") {
-        const { data: answer, error } = await supabase
-          .from("answers")
-          .insert({ response_id: response.id, question_id: q.id })
-          .select()
-          .single();
         if (error) throw error;
-        await supabase.from("answer_options").insert({ answer_id: answer.id, option_id: a });
+      } else if (q.type === "single_choice") {
+        const answerId = crypto.randomUUID();
+        const { error } = await supabase
+          .from("answers")
+          .insert({ id: answerId, response_id: responseId, question_id: q.id });
+        if (error) throw error;
+        const { error: optErr } = await supabase.from("answer_options").insert({ answer_id: answerId, option_id: a });
+        if (optErr) throw optErr;
       } else if (q.type === "multiple_choice") {
         if (a.size === 0) continue;
-        const { data: answer, error } = await supabase
+        const answerId = crypto.randomUUID();
+        const { error } = await supabase
           .from("answers")
-          .insert({ response_id: response.id, question_id: q.id })
-          .select()
-          .single();
+          .insert({ id: answerId, response_id: responseId, question_id: q.id });
         if (error) throw error;
-        const rows = Array.from(a).map((optionId) => ({ answer_id: answer.id, option_id: optionId }));
-        await supabase.from("answer_options").insert(rows);
+        const rows = Array.from(a).map((optionId) => ({ answer_id: answerId, option_id: optionId }));
+        const { error: optErr } = await supabase.from("answer_options").insert(rows);
+        if (optErr) throw optErr;
+      } else if (q.type === "reorder") {
+        const answerId = crypto.randomUUID();
+        const { error } = await supabase
+          .from("answers")
+          .insert({ id: answerId, response_id: responseId, question_id: q.id });
+        if (error) throw error;
+        const rows = a.map((optionId, idx) => ({ answer_id: answerId, option_id: optionId, position: idx }));
+        const { error: optErr } = await supabase.from("answer_options").insert(rows);
+        if (optErr) throw optErr;
       }
     }
+
+    return submittedAt;
   }
 
-  function renderThankYou() {
+  function buildPdfItems(list) {
+    return list.map((q) => {
+      const a = state.answers[q.id];
+      let answerText = "";
+      let photoUrl = null;
+
+      if (q.type === "open") {
+        answerText = a || "";
+      } else if (q.type === "true_false") {
+        answerText = a === true ? "Vero" : a === false ? "Falso" : "";
+      } else if (q.type === "photo") {
+        photoUrl = a || null;
+      } else if (q.type === "single_choice") {
+        const opt = q.question_options.find((o) => o.id === a);
+        answerText = opt ? opt.text : "";
+      } else if (q.type === "multiple_choice") {
+        const selected = a instanceof Set ? a : new Set();
+        answerText = q.question_options
+          .filter((o) => selected.has(o.id))
+          .map((o) => o.text)
+          .join(", ");
+      } else if (q.type === "reorder") {
+        const order = Array.isArray(a) ? a : [];
+        answerText = order
+          .map((optionId, idx) => {
+            const opt = q.question_options.find((o) => o.id === optionId);
+            return opt ? `${idx + 1}. ${opt.text}` : null;
+          })
+          .filter(Boolean)
+          .join(", ");
+      }
+
+      return { questionText: q.text, answerText, photoUrl };
+    });
+  }
+
+  function renderThankYou(list, submittedAt) {
     app.innerHTML = `
       ${topbarHTML(questionnaire.title)}
       <main class="container">
         <div class="card center">
           <h2>Grazie, ${escapeHtml(state.name)}!</h2>
           <p>Le tue risposte sono state inviate correttamente.</p>
+          <button class="btn secondary" id="pdfBtn">Scarica PDF delle tue risposte</button>
           <a class="btn secondary" href="#/">Torna alla home</a>
         </div>
       </main>
     `;
+
+    app.querySelector("#pdfBtn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = "Genero il PDF...";
+      try {
+        const { downloadResponsePdf } = await import("../utils/pdf.js");
+        await downloadResponsePdf({
+          questionnaireTitle: questionnaire.title,
+          respondentName: state.name,
+          matricola: state.matricola,
+          submittedAt,
+          items: buildPdfItems(list),
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Non e' stato possibile generare il PDF. Riprova.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Scarica PDF delle tue risposte";
+      }
+    });
   }
 }
