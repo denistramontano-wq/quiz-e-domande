@@ -406,11 +406,25 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
       );
       answerAreaHeight = answerLines.length * (LINE_HEIGHT - 1);
     } else if (q.type === "true_false") {
+      const availLabelWidth = contentW - 16;
+      doc.setFont("Carlito", "normal");
+      doc.setFontSize(8);
       optionRows = [
-        { label: "Vero", correct: q.correct_boolean === true },
-        { label: "Falso", correct: q.correct_boolean === false },
-      ].map((o) => ({ ...o, lines: [o.label] }));
-      answerAreaHeight = optionRows.length * OPTION_ROW_H;
+        { label: "Vero", correct: q.correct_boolean === true, note: null },
+        {
+          label: "Falso",
+          correct: q.correct_boolean === false,
+          note: q.correct_boolean === false ? q.false_explanation : null,
+        },
+      ].map((o) => ({
+        ...o,
+        lines: [o.label],
+        noteLines: o.note ? doc.splitTextToSize(o.note, availLabelWidth) : [],
+      }));
+      answerAreaHeight = optionRows.reduce(
+        (sum, o) => sum + OPTION_ROW_H + (o.note ? OPTION_NOTE_H * o.noteLines.length : 0),
+        0
+      );
       if (q.correct_boolean !== true && q.correct_boolean !== false) {
         doc.setFontSize(9.5);
         answerLines = doc.splitTextToSize("(nessuna risposta corretta impostata)", textWidth);
@@ -424,15 +438,22 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
         // Il font usato per calcolare l'a-capo deve coincidere con quello di
         // disegno (le opzioni corrette sono in grassetto e piu' larghe).
         doc.setFont("Carlito", o.is_correct ? "bold" : "normal");
+        const labelLines = doc.splitTextToSize(o.text || "", availLabelWidth);
+        doc.setFont("Carlito", "normal");
+        doc.setFontSize(8);
+        const noteLines = o.note ? doc.splitTextToSize(o.note, availLabelWidth) : [];
+        doc.setFontSize(9.5);
         return {
           label: o.text,
-          lines: doc.splitTextToSize(o.text || "", availLabelWidth),
+          lines: labelLines,
           note: o.note,
+          noteLines,
           correct: o.is_correct,
         };
       });
       answerAreaHeight = optionRows.reduce(
-        (sum, o) => sum + OPTION_ROW_H + Math.max(0, o.lines.length - 1) * LINE_HEIGHT + (o.note ? OPTION_NOTE_H : 0),
+        (sum, o) =>
+          sum + OPTION_ROW_H + Math.max(0, o.lines.length - 1) * LINE_HEIGHT + (o.note ? OPTION_NOTE_H * o.noteLines.length : 0),
         0
       );
       if (!options.some((o) => o.is_correct)) {
@@ -530,8 +551,9 @@ export async function downloadAnswerKeyPdf({ title, description, questions }) {
           doc.setFont("Carlito", "normal");
           doc.setFontSize(8);
           doc.setTextColor(...MUTED);
-          doc.text(o.note, boxX + 16, cursorY - 9);
-          cursorY += OPTION_NOTE_H;
+          const noteLines = o.noteLines && o.noteLines.length > 0 ? o.noteLines : [o.note];
+          doc.text(noteLines, boxX + 16, cursorY - 9);
+          cursorY += OPTION_NOTE_H * noteLines.length;
         }
       });
     }

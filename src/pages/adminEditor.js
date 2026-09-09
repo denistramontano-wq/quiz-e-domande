@@ -24,6 +24,7 @@ function blankForm() {
     imageUrl: null,
     correctBoolean: null,
     correctAnswerText: "",
+    falseExplanation: "",
     options: [
       { text: "", note: "", isCorrect: false },
       { text: "", note: "", isCorrect: false },
@@ -360,6 +361,12 @@ export async function renderAdminEditor(app, questionnaireId) {
             ? '<button type="button" class="btn secondary small" id="clearCorrectBool" style="margin-top:8px;">Rimuovi risposta corretta</button>'
             : ""
         }
+        ${
+          form.correctBoolean === false
+            ? `<label for="falseExplanation">Perche' e' falsa (facoltativo, la vedi solo tu)</label>
+               <textarea id="falseExplanation" placeholder="Spiegazione visibile solo all'amministratore...">${escapeHtml(form.falseExplanation)}</textarea>`
+            : ""
+        }
       `;
       section.querySelectorAll("#correctBoolPicker button").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -372,6 +379,12 @@ export async function renderAdminEditor(app, questionnaireId) {
         clearBtn.addEventListener("click", () => {
           form.correctBoolean = null;
           renderCorrectAnswerSection();
+        });
+      }
+      const explanationInput = section.querySelector("#falseExplanation");
+      if (explanationInput) {
+        explanationInput.addEventListener("input", (e) => {
+          form.falseExplanation = e.target.value;
         });
       }
     } else {
@@ -532,6 +545,10 @@ export async function renderAdminEditor(app, questionnaireId) {
             required: form.required,
             correct_boolean: form.type === "true_false" ? form.correctBoolean : null,
             correct_answer_text: form.type === "open" ? form.correctAnswerText.trim() || null : null,
+            false_explanation:
+              form.type === "true_false" && form.correctBoolean === false
+                ? form.falseExplanation.trim() || null
+                : null,
           })
           .eq("id", questionId);
         await supabase.from("question_options").delete().eq("question_id", questionId);
@@ -547,6 +564,10 @@ export async function renderAdminEditor(app, questionnaireId) {
             required: form.required,
             correct_boolean: form.type === "true_false" ? form.correctBoolean : null,
             correct_answer_text: form.type === "open" ? form.correctAnswerText.trim() || null : null,
+            false_explanation:
+              form.type === "true_false" && form.correctBoolean === false
+                ? form.falseExplanation.trim() || null
+                : null,
             order_index: maxOrder + 1,
           })
           .select()
@@ -589,7 +610,12 @@ export async function renderAdminEditor(app, questionnaireId) {
     const img = q.image_url ? `<img src="${q.image_url}" class="question-image" style="max-height:120px;" />` : "";
     const correctInfo =
       q.type === "true_false" && (q.correct_boolean === true || q.correct_boolean === false)
-        ? `<p class="hint" style="color:var(--success);margin-top:6px;">Risposta corretta: ${q.correct_boolean ? "Vero" : "Falso"}</p>`
+        ? `<p class="hint" style="color:var(--success);margin-top:6px;">Risposta corretta: ${q.correct_boolean ? "Vero" : "Falso"}</p>
+           ${
+             q.correct_boolean === false && q.false_explanation
+               ? `<p class="hint" style="margin-top:2px;">Perche' e' falsa: ${escapeHtml(q.false_explanation)}</p>`
+               : ""
+           }`
         : q.type === "open" && q.correct_answer_text
           ? `<p class="hint" style="margin-top:6px;">Risposta di riferimento: ${escapeHtml(q.correct_answer_text)}</p>`
           : "";
@@ -626,6 +652,7 @@ export async function renderAdminEditor(app, questionnaireId) {
           imageUrl: q.image_url,
           correctBoolean: q.correct_boolean === true || q.correct_boolean === false ? q.correct_boolean : null,
           correctAnswerText: q.correct_answer_text || "",
+          falseExplanation: q.false_explanation || "",
           options:
             q.question_options.length > 0
               ? q.question_options.map((o) => ({ text: o.text, note: o.note || "", isCorrect: !!o.is_correct }))
@@ -679,6 +706,7 @@ export async function renderAdminEditor(app, questionnaireId) {
         required: q.required,
         correct_boolean: q.correct_boolean === true || q.correct_boolean === false ? q.correct_boolean : null,
         correct_answer_text: q.correct_answer_text || null,
+        false_explanation: q.correct_boolean === false ? q.false_explanation || null : null,
         order_index: maxOrder + 1,
       })
       .select()

@@ -260,6 +260,10 @@ export async function renderAdminResponseDetail(app, questionnaireId, responseId
       correctLabel && correct !== true
         ? `<div class="hint" style="margin-top:6px;white-space:pre-line;">Risposta corretta: ${escapeHtml(correctLabel)}</div>`
         : "";
+    const falseExplanationHtml =
+      q.type === "true_false" && q.correct_boolean === false && q.false_explanation && correct !== true
+        ? `<div class="hint" style="margin-top:2px;white-space:pre-line;">Perche' e' falsa: ${escapeHtml(q.false_explanation)}</div>`
+        : "";
 
     return `
       <div class="qa-block">
@@ -270,6 +274,7 @@ export async function renderAdminResponseDetail(app, questionnaireId, responseId
         <div class="qa-question">${escapeHtml(q.text)}</div>
         ${answerHtml}
         ${referenceHtml}
+        ${falseExplanationHtml}
       </div>
     `;
   }
