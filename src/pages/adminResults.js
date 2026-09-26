@@ -42,10 +42,24 @@ export async function renderAdminResults(app, questionnaireId) {
     if (question.type === "single_choice" || question.type === "multiple_choice") {
       return answer.answer_options.map((ao) => ao.question_options?.text).filter(Boolean).join(", ");
     }
+    if (question.type === "reorder") {
+      const ordered = [...answer.answer_options].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      return ordered
+        .map((ao) => ao.question_options?.text)
+        .filter(Boolean)
+        .map((text, idx) => `${idx + 1}. ${text}`)
+        .join(", ");
+    }
     return "";
   }
 
-  function renderTable(filtered) {
+  function initials(name) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    const chars = parts.slice(0, 2).map((p) => p[0].toUpperCase());
+    return chars.join("") || "?";
+  }
+
+  function renderList(filtered) {
     const main = app.querySelector("main");
     main.innerHTML = `
       <div class="card">
@@ -59,35 +73,7 @@ export async function renderAdminResults(app, questionnaireId) {
         ${
           filtered.length === 0
             ? '<div class="empty-state">Nessuna risposta trovata.</div>'
-            : `<div class="table-scroll"><table class="results-table">
-                <thead><tr>
-                  <th>Nome</th>
-                  <th>Matricola</th>
-                  <th>Data</th>
-                  ${list.map((q, i) => `<th>D${i + 1}</th>`).join("")}
-                </tr></thead>
-                <tbody>
-                  ${filtered
-                    .map(
-                      (r) => `
-                    <tr>
-                      <td>${escapeHtml(r.respondent_name)}</td>
-                      <td>${escapeHtml(r.matricola)}</td>
-                      <td>${new Date(r.submitted_at).toLocaleString("it-IT")}</td>
-                      ${list
-                        .map((q) => {
-                          const val = cellValue(r, q);
-                          if (q.type === "photo" && val) {
-                            return `<td><a href="${val}" target="_blank" rel="noopener">Foto</a></td>`;
-                          }
-                          return `<td>${escapeHtml(val)}</td>`;
-                        })
-                        .join("")}
-                    </tr>`
-                    )
-                    .join("")}
-                </tbody>
-              </table></div>`
+            : filtered.map(responseRowHTML).join("")
         }
       </div>
     `;
@@ -112,6 +98,22 @@ export async function renderAdminResults(app, questionnaireId) {
     });
   }
 
+  function responseRowHTML(r) {
+    const answered = list.filter((q) => cellValue(r, q)).length;
+    return `
+      <a class="response-row list-item" href="#/admin/questionnaire/${questionnaireId}/results/${r.id}">
+        <div class="response-avatar">${escapeHtml(initials(r.respondent_name))}</div>
+        <div class="info">
+          <strong>${escapeHtml(r.respondent_name)}</strong>
+          <span class="meta">Matricola ${escapeHtml(r.matricola)} &middot; ${new Date(r.submitted_at).toLocaleString("it-IT")} &middot; ${answered}/${list.length} risposte</span>
+        </div>
+        <span class="response-chevron" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </a>
+    `;
+  }
+
   function applyFilter(query) {
     const q = query.trim().toLowerCase();
     const filtered = !q
@@ -119,12 +121,12 @@ export async function renderAdminResults(app, questionnaireId) {
       : allResponses.filter(
           (r) => r.respondent_name.toLowerCase().includes(q) || r.matricola.includes(q)
         );
-    renderTable(filtered);
+    renderList(filtered);
     const search = app.querySelector("#search");
     search.value = query;
     search.focus();
     search.setSelectionRange(query.length, query.length);
   }
 
-  renderTable(allResponses);
+  renderList(allResponses);
 }

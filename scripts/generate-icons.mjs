@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync } from "fs";
 
 mkdirSync("public/icons", { recursive: true });
 
-const BG = [91, 60, 196]; // viola brand
+const BG = [232, 98, 63]; // corallo brand
 const FG = [255, 255, 255];
 
 function drawIcon(size) {
